@@ -23,7 +23,7 @@ class AIService:
         self.client = None
         if self.api_key:
             try:
-                self.client = genai.Client(api_key=self.api_key)
+                self.client = genai.Client(api_key=self.api_key, http_options=types.HttpOptions(timeout=15000))
             except Exception as e:
                 logger.error(f"Gemini client initialization error: {e}")
 
