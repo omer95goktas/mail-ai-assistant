@@ -189,7 +189,9 @@ def fetch_unseen_emails(account: dict):
             return results
 
         mail_ids = messages[0].split()
-        for m_id in mail_ids:
+        # Newest emails are at the end; inspect newest first (limit to last 20 for fast response)
+        recent_ids = list(reversed(mail_ids))[:20]
+        for m_id in recent_ids:
             try:
                 res, data = mail.fetch(m_id, "(BODY.PEEK[])")
                 if res != "OK":
