@@ -274,19 +274,111 @@ def mark_email_as_seen(account: dict, message_id: str):
         logger.error(f"Failed to mark email as seen for {email_address}: {e}")
         return False
 
+def format_signature_html(text: str) -> tuple[str, str]:
+    """
+    Extracts the signature from the end of the text and returns (body_text, signature_html).
+    Produces the requested format:
+    <p>Ömer Göktaş<br><a href="https://apps.omergoktas.net">apps.omergoktas.net</a></p>
+    with salutation if present (e.g. Saygılarımla,).
+    """
+    lines = text.strip().splitlines()
+    idx_omer = -1
+    for i in range(len(lines) - 1, max(-1, len(lines) - 6), -1):
+        line_clean = lines[i].strip().lower()
+        if "ömer göktaş" in line_clean or "omer goktas" in line_clean:
+            idx_omer = i
+            break
+
+    if idx_omer != -1:
+        has_closing = False
+        closing_text = ""
+        if idx_omer > 0:
+            prec = lines[idx_omer - 1].strip()
+            if any(prec.lower().startswith(w) for w in ["saygı", "iyi ", "teşekkür", "kolay", "sevgi"]):
+                has_closing = True
+                closing_text = prec
+                body_lines = lines[:idx_omer - 1]
+            else:
+                body_lines = lines[:idx_omer]
+        else:
+            body_lines = lines[:idx_omer]
+
+        closing_html = f"{html.escape(closing_text)}<br>" if has_closing else ""
+        sig_html = (
+            f'<p style="margin-top: 20px; margin-bottom: 0; line-height: 1.6;">'
+            f'{closing_html}Ömer Göktaş<br>'
+            f'<a href="https://apps.omergoktas.net" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">apps.omergoktas.net</a>'
+            f'</p>'
+        )
+        return "\n".join(body_lines).strip(), sig_html
+    else:
+        sig_html = (
+            f'<p style="margin-top: 20px; margin-bottom: 0; line-height: 1.6;">'
+            f'Ömer Göktaş<br>'
+            f'<a href="https://apps.omergoktas.net" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">apps.omergoktas.net</a>'
+            f'</p>'
+        )
+        return text.strip(), sig_html
+
 def convert_text_to_clean_html(text: str) -> str:
     """
-    Converts plain text reply into a clean, modern HTML version with auto-linked URLs.
+    Converts plain text reply into clean, spam-optimized HTML where no raw URLs appear naked.
+    URLs are converted into semantic anchor text (e.g. Uygulama Vitrini, Google Play Mağazası),
+    and signature matches:
+    <p>Ömer Göktaş<br><a href="https://apps.omergoktas.net">apps.omergoktas.net</a></p>
     """
-    escaped_text = html.escape(text)
-    
-    # Auto-link URLs
-    url_pattern = re.compile(r'(https?://[^\s<]+)')
-    linked_text = url_pattern.sub(r'<a href="\1" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">\1</a>', escaped_text)
-    
-    # Newlines to HTML line breaks
-    formatted_body = linked_text.replace("\r\n", "\n").replace("\n", "<br>\n")
-    
+    body_text, sig_html = format_signature_html(text)
+    body_escaped = html.escape(body_text)
+
+    # 1. Replace known label + URL patterns (e.g. "Google Play: https://...")
+    labeled_replacements = [
+        (re.compile(r'(Google\s*Play(?:\s*Mağazası)?)\s*:\s*(https?://[^\s<]+)', re.IGNORECASE),
+         r'<a href="\2" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">Google Play Mağazası</a>'),
+        (re.compile(r'(Microsoft\s*Store)\s*:\s*(https?://[^\s<]+)', re.IGNORECASE),
+         r'<a href="\2" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">Microsoft Store</a>'),
+        (re.compile(r'(GitHub(?:\s*Deposu)?)\s*:\s*(https?://[^\s<]+)', re.IGNORECASE),
+         r'<a href="\2" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">GitHub Deposu</a>'),
+        (re.compile(r'(Doğrudan\s*İndirme(?:\s*Bağlantısı)?)\s*:\s*(https?://[^\s<]+)', re.IGNORECASE),
+         r'<a href="\2" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">Doğrudan İndirme Bağlantısı</a>'),
+        (re.compile(r'(Vitrin(?:\s*Detay\s*Sayfası|\s*Sitesi)?)\s*:\s*(https?://[^\s<]+)', re.IGNORECASE),
+         r'<a href="\2" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">Uygulama Vitrini</a>'),
+    ]
+
+    for pat, repl in labeled_replacements:
+        body_escaped = pat.sub(repl, body_escaped)
+
+    # 2. Replace any remaining naked URLs not already in href
+    def replace_naked_url(match):
+        raw_url = match.group(0)
+        url_lower = raw_url.lower()
+        if "apps.omergoktas.net/app/" in url_lower:
+            anchor = "Uygulama Detay Sayfası"
+        elif "apps.omergoktas.net" in url_lower:
+            anchor = "Uygulama Vitrini"
+        elif "play.google.com" in url_lower:
+            anchor = "Google Play Mağazası"
+        elif "apps.microsoft.com" in url_lower or "microsoft.com/store" in url_lower:
+            anchor = "Microsoft Store"
+        elif "github.com" in url_lower:
+            anchor = "GitHub Deposu"
+        elif url_lower.endswith((".apk", ".exe", ".zip", ".msi", ".dmg")):
+            anchor = "İndirme Bağlantısı"
+        else:
+            anchor = "İlgili Bağlantı"
+        return f'<a href="{raw_url}" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">{anchor}</a>'
+
+    url_pattern = re.compile(r'(?<!href=")(https?://[^\s<"]+)')
+    body_escaped = url_pattern.sub(replace_naked_url, body_escaped)
+
+    # 3. Format paragraphs
+    paragraphs = [p.strip() for p in body_escaped.split("\n\n") if p.strip()]
+    formatted_paragraphs = []
+    for p in paragraphs:
+        lines = p.replace("\r\n", "\n").split("\n")
+        formatted_paragraphs.append(f'<p style="margin-top: 0; margin-bottom: 12px; line-height: 1.6;">{"<br>".join(lines)}</p>')
+
+    body_html = "\n".join(formatted_paragraphs)
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -309,7 +401,8 @@ a {{
 </head>
 <body>
 <div>
-{formatted_body}
+{body_html}
+{sig_html}
 </div>
 </body>
 </html>"""
@@ -350,9 +443,17 @@ def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: st
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain=domain)
 
+    # 4. Strict thread header enforcement (In-Reply-To & References)
     if in_reply_to:
-        msg["In-Reply-To"] = in_reply_to
-        msg["References"] = in_reply_to
+        ref_id = str(in_reply_to).strip()
+        if ref_id:
+            if not ref_id.startswith("<"):
+                ref_id = f"<{ref_id}"
+            if not ref_id.endswith(">"):
+                ref_id = f"{ref_id}>"
+            msg["In-Reply-To"] = ref_id
+            msg["References"] = ref_id
+            logger.info(f"Thread headers set: In-Reply-To={ref_id}, References={ref_id}")
 
     # Attach text/plain
     part_plain = MIMEText(draft_reply, "plain", "utf-8")
