@@ -97,7 +97,7 @@ Sadece aşağıdaki JSON formatında, geçerli bir JSON nesnesi döndür:
   "auto_send": true
 }}
 """
-        models_to_try = [self.model, "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"]
+        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]
         seen_models = set()
         unique_models = []
         for m in models_to_try:
@@ -195,7 +195,7 @@ Bu e-posta için yukarıda daha önce hazırlanan taslaktan FARKLI, alternatif b
 
 Sadece yeni e-posta yanıt taslağı metnini döndür (başka açıklama veya JSON ekleme)."""
 
-        models_to_try = [self.model, "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"]
+        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]
         seen_models = set()
         unique_models = [m for m in models_to_try if m and not (m in seen_models or seen_models.add(m))]
         for m in unique_models:
@@ -252,7 +252,7 @@ Yukarıdaki mevcut yanıt taslağını kullanıcının verdiği özel talimata g
 
 Sadece revize edilmiş yeni e-posta yanıt metnini döndür (başka açıklama veya JSON ekleme)."""
 
-        models_to_try = [self.model, "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"]
+        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]
         seen_models = set()
         unique_models = [m for m in models_to_try if m and not (m in seen_models or seen_models.add(m))]
         for m in unique_models:
