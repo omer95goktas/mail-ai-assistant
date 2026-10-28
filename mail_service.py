@@ -1,10 +1,12 @@
 import imaplib
 import smtplib
 import email
-from email.header import decode_header
+from email.header import decode_header, Header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.utils import formatdate, make_msgid, parseaddr
+from email.utils import formatdate, make_msgid, parseaddr, formataddr
+import re
+import html
 import logging
 from bs4 import BeautifulSoup
 import config
@@ -272,9 +274,50 @@ def mark_email_as_seen(account: dict, message_id: str):
         logger.error(f"Failed to mark email as seen for {email_address}: {e}")
         return False
 
+def convert_text_to_clean_html(text: str) -> str:
+    """
+    Converts plain text reply into a clean, modern HTML version with auto-linked URLs.
+    """
+    escaped_text = html.escape(text)
+    
+    # Auto-link URLs
+    url_pattern = re.compile(r'(https?://[^\s<]+)')
+    linked_text = url_pattern.sub(r'<a href="\1" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">\1</a>', escaped_text)
+    
+    # Newlines to HTML line breaks
+    formatted_body = linked_text.replace("\r\n", "\n").replace("\n", "<br>\n")
+    
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #202124;
+    background-color: #ffffff;
+    margin: 0;
+    padding: 12px;
+}}
+a {{
+    color: #1a73e8;
+    text-decoration: underline;
+}}
+</style>
+</head>
+<body>
+<div>
+{formatted_body}
+</div>
+</body>
+</html>"""
+
 def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: str, draft_reply: str):
     """
-    Sends email reply via SMTP with In-Reply-To and References headers.
+    Sends email reply via SMTP with In-Reply-To, References, standard From header,
+    Message-ID domain override, and MIMEMultipart alternative (text/plain + text/html).
     """
     smtp_server = account["smtp_server"]
     smtp_port = int(account["smtp_port"])
@@ -289,16 +332,36 @@ def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: st
     if not reply_subj.lower().startswith("re:"):
         reply_subj = f"Re: {reply_subj}"
 
-    msg = MIMEText(draft_reply, "plain", "utf-8")
-    msg["From"] = f"Ömer Göktaş <{email_address}>"
+    # 1. Clean sender address and format standard From header
+    _, sender_email = parseaddr(email_address)
+    if not sender_email:
+        sender_email = email_address.strip()
+
+    # 2. Override Message-ID domain to prevent @debian local hostname
+    domain = sender_email.split("@")[-1] if "@" in sender_email else "omergoktas.net"
+    if not domain or domain.lower() in ["localhost", "debian"]:
+        domain = "omergoktas.net"
+
+    # 3. Create MIMEMultipart('alternative') with text/plain + text/html
+    msg = MIMEMultipart("alternative")
+    msg["From"] = formataddr((str(Header("Ömer Göktaş", "utf-8")), sender_email))
     msg["To"] = clean_to
     msg["Subject"] = reply_subj
     msg["Date"] = formatdate(localtime=True)
-    msg["Message-ID"] = make_msgid()
+    msg["Message-ID"] = make_msgid(domain=domain)
 
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to
         msg["References"] = in_reply_to
+
+    # Attach text/plain
+    part_plain = MIMEText(draft_reply, "plain", "utf-8")
+    msg.attach(part_plain)
+
+    # Attach text/html
+    html_content = convert_text_to_clean_html(draft_reply)
+    part_html = MIMEText(html_content, "html", "utf-8")
+    msg.attach(part_html)
 
     try:
         if smtp_port == 465:
@@ -313,7 +376,7 @@ def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: st
         server.login(email_address, app_password)
         server.send_message(msg)
         server.quit()
-        logger.info(f"Successfully sent reply to {clean_to} from {email_address}")
+        logger.info(f"Successfully sent reply to {clean_to} from {email_address} (Message-ID: {msg['Message-ID']})")
         return True, "E-posta başarıyla gönderildi."
     except Exception as e:
         logger.error(f"Failed to send email via SMTP {smtp_server}:{smtp_port}: {e}")
