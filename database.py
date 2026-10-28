@@ -157,6 +157,20 @@ async def update_pending_draft(reply_id: int, new_draft: str) -> bool:
         await db.commit()
         return cursor.rowcount > 0
 
+async def get_cancelled_replies(limit: int = 10):
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT p.*, a.email_address
+            FROM pending_replies p
+            JOIN accounts a ON p.account_id = a.id
+            WHERE p.status = 'CANCELLED'
+            ORDER BY p.id DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
 async def get_stats():
     async with get_db() as db:
         cur_total_acc = await db.execute("SELECT COUNT(*) FROM accounts")

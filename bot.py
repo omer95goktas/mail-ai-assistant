@@ -1,4 +1,4 @@
-﻿import html
+import html
 import asyncio
 import logging
 import psutil
@@ -76,6 +76,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /hesap_sil &lt;id&gt; — Belirtilen hesabı kaldırır.\n"
         "• /vitrin — Vitrinde yayında olan uygulamaları listeler.\n"
         "• /durum — Sistem kaynakları, bekleyen onaylar ve veritabanı durumu.\n"
+        "• /iptaller — Yanlışlıkla iptal edilen e-postaları listeler.\n"
+        "• /geri_al &lt;id&gt; — İptal edilen e-postayı onay kuyruğuna geri alır.\n"
         "• /kontrol_et — Tüm hesapları anında manuel olarak kontrol eder.\n"
         "• /yardim — Bu yardım kılavuzunu görüntüler."
     )
@@ -369,6 +371,32 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Bu kayıt veritabanında bulunamadı.")
         return
 
+    if action == "restore":
+        if pending["status"] != "CANCELLED":
+            status_tr = "Gönderilmiş" if pending["status"] == "SENT" else "Zaten Beklemede"
+            await query.answer(f"Bu kayıt iptal edilmiş durumda değil ({status_tr}).", show_alert=True)
+            return
+
+        await database.update_reply_status(reply_id, "PENDING")
+        await query.answer("↩️ İptal geri alındı, onay kuyruğuna eklendi!", show_alert=True)
+
+        restore_text = (
+            f"↩️ <b>E-posta Onay Kuyruğuna Geri Alındı!</b> (Hesap: <code>{html.escape(pending['email_address'])}</code>)\n"
+            f"<b>Kimden:</b> {html.escape(pending['sender'])}\n"
+            f"<b>Konu:</b> {html.escape(pending['subject'])}\n\n"
+            f"📌 <b>Özet:</b>\n{html.escape(pending['gemini_summary'])}\n\n"
+            f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(pending['draft_reply'])}"
+        )
+        try:
+            await query.edit_message_text(
+                text=restore_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_approval_keyboard(reply_id)
+            )
+        except Exception as e:
+            logger.error(f"Error updating message after restore: {e}")
+        return
+
     if pending["status"] != "PENDING":
         status_tr = "Gönderilmiş" if pending["status"] == "SENT" else "İptal Edilmiş"
         await query.answer(f"Bu e-posta zaten işlem görmüş ({status_tr}).", show_alert=True)
@@ -474,12 +502,20 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"{original_text}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"❌ <b>YANIT İPTAL EDİLDİ</b>\n"
-            f"🗓️ <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>"
+            f"🗓️ <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>\n"
+            f"<i>(Yanlışlıkla iptal ettiyseniz aşağıdaki butona basarak geri alabilirsiniz)</i>"
         )
+        restore_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("↩️ İptali Geri Al (Yeniden Aç)", callback_data=f"restore:{reply_id}")]
+        ])
         try:
-            await query.edit_message_text(text=updated_text, parse_mode=ParseMode.HTML, reply_markup=None)
+            await query.edit_message_text(text=updated_text, parse_mode=ParseMode.HTML, reply_markup=restore_markup)
         except Exception:
-            await query.message.reply_text(f"❌ <b>ID {reply_id} yanıtı iptal edildi.</b>", parse_mode=ParseMode.HTML)
+            await query.message.reply_text(
+                f"❌ <b>ID {reply_id} yanıtı iptal edildi.</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=restore_markup
+            )
 
 # Message handler for drafting instructions
 @admin_only
@@ -674,6 +710,69 @@ async def cmd_kontrol_et(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"✅ Tarama tamamlandı. <b>{count}</b> adet e-posta işlendi.", parse_mode=ParseMode.HTML)
 
+@admin_only
+async def cmd_iptaller(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cancelled = await database.get_cancelled_replies(limit=10)
+    if not cancelled:
+        await update.message.reply_text("📭 İptal edilmiş herhangi bir e-posta yanıtı bulunmuyor.")
+        return
+
+    text = "📋 <b>Son İptal Edilen Yanıtlar:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+    for r in cancelled:
+        snippet = (r.get("incoming_snippet") or "")[:100].replace("\n", " ")
+        text += (
+            f"• <b>ID: {r['id']}</b> | Kimden: {html.escape(r.get('sender') or '')}\n"
+            f"  Konu: {html.escape(r.get('subject') or '(Konusuz)')}\n"
+            f"  👉 Geri Almak İçin: /geri_al_{r['id']}\n\n"
+        )
+    text += "<i>Bir e-postayı onay kuyruğuna geri almak için yukarıdaki mavi /geri_al_... linkine tıklayabilir veya <code>/geri_al &lt;id&gt;</code> yazabilirsiniz.</i>"
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+@admin_only
+async def cmd_geri_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    reply_id = None
+    if args and args[0].isdigit():
+        reply_id = int(args[0])
+    elif update.message.text.startswith("/geri_al_"):
+        part = update.message.text.split("_")[-1]
+        if part.isdigit():
+            reply_id = int(part)
+
+    if not reply_id:
+        await update.message.reply_text(
+            "Kullanım: <code>/geri_al &lt;id&gt;</code> (Örn: <code>/geri_al 7</code>)\n"
+            "İptal edilen tüm mailleri listelemek için: /iptaller",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    pending = await database.get_pending_reply(reply_id)
+    if not pending:
+        await update.message.reply_text(f"❌ ID {reply_id} olan kayıt veritabanında bulunamadı.")
+        return
+
+    if pending["status"] == "SENT":
+        await update.message.reply_text(f"⚠️ ID {reply_id} yanıtı zaten gönderilmiş, geri alınamaz.")
+        return
+
+    await database.update_reply_status(reply_id, "PENDING")
+
+    restore_text = (
+        f"↩️ <b>E-posta Onay Kuyruğuna Geri Alındı! (ID: {reply_id})</b>\n"
+        f"<b>Hesap:</b> <code>{html.escape(pending['email_address'])}</code>\n"
+        f"<b>Kimden:</b> {html.escape(pending['sender'])}\n"
+        f"<b>Konu:</b> {html.escape(pending['subject'])}\n\n"
+        f"📌 <b>Özet:</b>\n{html.escape(pending['gemini_summary'])}\n\n"
+        f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(pending['draft_reply'])}"
+    )
+
+    await update.message.reply_text(
+        text=restore_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_approval_keyboard(reply_id)
+    )
+
 def setup_bot_handlers(application: Application):
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("hesap_ekle", start_hesap_ekle)],
@@ -693,6 +792,9 @@ def setup_bot_handlers(application: Application):
     application.add_handler(CommandHandler("hesaplar", cmd_hesaplar))
     application.add_handler(CommandHandler("durum", cmd_durum))
     application.add_handler(CommandHandler("kontrol_et", cmd_kontrol_et))
+    application.add_handler(CommandHandler("iptaller", cmd_iptaller))
+    application.add_handler(CommandHandler("geri_al", cmd_geri_al))
+    application.add_handler(MessageHandler(filters.Regex(r"^/geri_al_\d+"), cmd_geri_al))
     application.add_handler(CommandHandler("hesap_sil", cmd_hesap_sil))
     application.add_handler(MessageHandler(filters.Regex(r"^/hesap_sil_\d+"), cmd_hesap_sil))
     application.add_handler(MessageHandler(filters.Regex(r"^/durum_degis_\d+"), cmd_durum_degis))
