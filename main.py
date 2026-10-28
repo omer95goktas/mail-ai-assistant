@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import logging.handlers
 import sys
 from telegram.constants import ParseMode
 from telegram.ext import Application
@@ -8,13 +9,20 @@ import config
 import database
 from bot import setup_bot_handlers, check_emails_cycle
 
-# Setup logging
+# Setup logging with RotatingFileHandler to avoid unbounded disk usage
+file_handler = logging.handlers.RotatingFileHandler(
+    config.BASE_DIR / "assistant.log",
+    maxBytes=5 * 1024 * 1024,  # 5 MB per file
+    backupCount=3,
+    encoding="utf-8"
+)
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(config.BASE_DIR / "assistant.log", encoding="utf-8")
+        file_handler
     ]
 )
 logger = logging.getLogger("mailagent")

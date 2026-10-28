@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 from google import genai
 from google.genai import types
@@ -111,6 +111,13 @@ Sadece aşağıdaki JSON formatında, geçerli bir JSON nesnesi döndür:
                     )
                 )
                 text = response.text.strip()
+                if text.startswith("```"):
+                    lines = text.splitlines()
+                    if lines and lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    text = "\n".join(lines).strip()
                 data = json.loads(text)
                 
                 is_link_req = bool(data.get("is_link_request", False))
@@ -181,7 +188,9 @@ Bu e-posta için yukarıda daha önce hazırlanan taslaktan FARKLI, alternatif b
 Sadece yeni e-posta yanıt taslağı metnini döndür (başka açıklama veya JSON ekleme)."""
 
         models_to_try = [self.model, "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"]
-        for m in models_to_try:
+        seen_models = set()
+        unique_models = [m for m in models_to_try if m and not (m in seen_models or seen_models.add(m))]
+        for m in unique_models:
             try:
                 res = self.client.models.generate_content(
                     model=m,
@@ -233,7 +242,9 @@ Yukarıdaki mevcut yanıt taslağını kullanıcının verdiği özel talimata g
 Sadece revize edilmiş yeni e-posta yanıt metnini döndür (başka açıklama veya JSON ekleme)."""
 
         models_to_try = [self.model, "gemini-3.5-flash", "gemini-3.8-flash", "gemini-3.1-flash-lite"]
-        for m in models_to_try:
+        seen_models = set()
+        unique_models = [m for m in models_to_try if m and not (m in seen_models or seen_models.add(m))]
+        for m in unique_models:
             try:
                 res = self.client.models.generate_content(
                     model=m,

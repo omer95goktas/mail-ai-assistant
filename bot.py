@@ -38,6 +38,12 @@ def admin_only(func):
         return await func(update, context, *args, **kwargs)
     return wrapper
 
+def safe_html_truncate(text: str, max_chars: int = 3800) -> str:
+    """Safely limits text length to prevent Telegram 4096 char limit errors."""
+    if not text or len(text) <= max_chars:
+        return text or ""
+    return text[:max_chars - 40] + "\n\n<i>[Uzunluk sınırı nedeniyle kısaltıldı]</i>"
+
 def get_approval_keyboard(pending_id: int) -> InlineKeyboardMarkup:
     """
     Returns the 4-button approval keyboard:
@@ -178,7 +184,7 @@ async def cmd_durum(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🤖 <b>Bot Durumu:</b> 🟢 Aktif ve Çalışıyor\n"
         f"📱 <b>Vitrin Uygulamaları:</b> {apps_count} adet yayında\n"
-        f"💾 <b>Veritabanı Boyutu:</b> {stats['db_size_kb']} KB\n"
+        f"💾 <b>Veritabanı:</b> {stats['db_size_kb']} KB (SQLite WAL Modu)\n"
         f"📧 <b>Hesaplar:</b> {stats['active_accounts']} aktif / {stats['total_accounts']} toplam\n"
         f"⏳ <b>Bekleyen Onaylar:</b> {stats['pending_count']} adet\n"
         f"✅ <b>Gönderilen Yanıtlar:</b> {stats['sent_count']} adet\n"
@@ -385,7 +391,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"<b>Kimden:</b> {html.escape(pending['sender'])}\n"
             f"<b>Konu:</b> {html.escape(pending['subject'])}\n\n"
             f"📌 <b>Özet:</b>\n{html.escape(pending['gemini_summary'])}\n\n"
-            f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(pending['draft_reply'])}"
+            f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(safe_html_truncate(pending['draft_reply'], 2500))}"
         )
         try:
             await query.edit_message_text(
@@ -467,7 +473,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"<b>Kimden:</b> {html.escape(pending['sender'])}\n"
             f"<b>Konu:</b> {html.escape(pending['subject'])}\n\n"
             f"📌 <b>Özet:</b>\n{html.escape(pending['gemini_summary'])}\n\n"
-            f"✍️ <b>Önerilen Yanıt (Farklı Tonla Yenilendi - {time_str}):</b>\n{html.escape(new_draft)}"
+            f"✍️ <b>Önerilen Yanıt (Farklı Tonla Yenilendi - {time_str}):</b>\n{html.escape(safe_html_truncate(new_draft, 2500))}"
         )
 
         try:
@@ -563,7 +569,7 @@ async def handle_edit_instruction(update: Update, context: ContextTypes.DEFAULT_
         f"<b>Kimden:</b> {html.escape(pending['sender'])}\n"
         f"<b>Konu:</b> {html.escape(pending['subject'])}\n\n"
         f"📌 <b>Özet:</b>\n{html.escape(pending['gemini_summary'])}\n\n"
-        f"✍️ <b>Önerilen Yanıt (Talimatınızla Düzenlendi):</b>\n{html.escape(refined_draft)}"
+        f"✍️ <b>Önerilen Yanıt (Talimatınızla Düzenlendi):</b>\n{html.escape(safe_html_truncate(refined_draft, 2500))}"
     )
 
     if orig_chat_id and orig_msg_id:
@@ -665,7 +671,7 @@ async def check_emails_cycle(bot) -> int:
                             f"<b>Konu:</b> {html.escape(subject)}\n"
                             f"<b>İşlem:</b> <i>{html.escape(app_label)}</i> için güncel indirme bağlantısı iletildi.\n\n"
                             f"📌 <b>Özet:</b>\n{html.escape(summary)}\n\n"
-                            f"✍️ <b>İletilen Yanıt:</b>\n{html.escape(reply_body)}"
+                            f"✍️ <b>İletilen Yanıt:</b>\n{html.escape(safe_html_truncate(reply_body, 2500))}"
                         )
 
                         await bot.send_message(
@@ -685,7 +691,7 @@ async def check_emails_cycle(bot) -> int:
                     f"<b>Kimden:</b> {html.escape(sender)}\n"
                     f"<b>Konu:</b> {html.escape(subject)}\n\n"
                     f"📌 <b>Özet:</b>\n{html.escape(summary)}\n\n"
-                    f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(reply_body)}"
+                    f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(safe_html_truncate(reply_body, 2500))}"
                     f"{note_html}"
                 )
 
@@ -764,7 +770,7 @@ async def cmd_geri_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>Kimden:</b> {html.escape(pending['sender'])}\n"
         f"<b>Konu:</b> {html.escape(pending['subject'])}\n\n"
         f"📌 <b>Özet:</b>\n{html.escape(pending['gemini_summary'])}\n\n"
-        f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(pending['draft_reply'])}"
+        f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(safe_html_truncate(pending['draft_reply'], 2500))}"
     )
 
     await update.message.reply_text(

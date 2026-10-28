@@ -1,10 +1,10 @@
-﻿import imaplib
+import imaplib
 import smtplib
 import email
 from email.header import decode_header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, parseaddr
 import logging
 from bs4 import BeautifulSoup
 import config
@@ -176,8 +176,14 @@ def fetch_unseen_emails(account: dict):
 
         status, messages = mail.search(None, "UNSEEN")
         if status != "OK" or not messages[0]:
-            mail.close()
-            mail.logout()
+            try:
+                mail.close()
+            except Exception:
+                pass
+            try:
+                mail.logout()
+            except Exception:
+                pass
             return results
 
         mail_ids = messages[0].split()
@@ -275,9 +281,9 @@ def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: st
     email_address = account["email_address"]
     app_password = account["app_password"]
 
-    clean_to = to_email
-    if "<" in to_email and ">" in to_email:
-        clean_to = to_email.split("<")[1].split(">")[0].strip()
+    _, clean_to = parseaddr(to_email)
+    if not clean_to:
+        clean_to = to_email.strip()
 
     reply_subj = subject.strip()
     if not reply_subj.lower().startswith("re:"):

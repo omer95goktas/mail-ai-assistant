@@ -1,4 +1,4 @@
-﻿import os
+import os
 import aiosqlite
 from pathlib import Path
 import config
@@ -6,12 +6,14 @@ import config
 def get_db():
     db_path = Path(config.DB_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return aiosqlite.connect(str(db_path))
+    return aiosqlite.connect(str(db_path), timeout=10.0)
 
 async def init_db():
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         await db.execute("PRAGMA foreign_keys = ON")
+        await db.execute("PRAGMA journal_mode = WAL")
+        await db.execute("PRAGMA busy_timeout = 5000")
         await db.execute("""
             CREATE TABLE IF NOT EXISTS accounts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,6 +53,11 @@ async def init_db():
                 UNIQUE(account_id, message_id)
             );
         """)
+
+        # Performance indexes
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_replies(status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_account ON pending_replies(account_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_processed_acc_msg ON processed_messages(account_id, message_id)")
 
         await db.commit()
 
