@@ -1,0 +1,18 @@
+[Unit]
+Description=Autonomous AI Mail Assistant Telegram Bot (mailagent)
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mail_assistant
+ExecStart=/opt/mail_assistant/venv/bin/python3 /opt/mail_assistant/main.py
+Restart=always
+RestartSec=5s
+EnvironmentFile=/opt/mail_assistant/.env
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
