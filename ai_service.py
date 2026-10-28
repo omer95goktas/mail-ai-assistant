@@ -9,12 +9,13 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_REPLY_TEMPLATE = """Merhaba,
 
-E-postanız için teşekkür ederim. İletinizi aldım ve en kısa sürede detaylı olarak dönüş yapacağım. Paylaşılmayan bilgi, bilgi değildir anlayışıyla her türlü soru ve iş birliğine açığım.
+E-postanız için teşekkür ederim. İletinizi aldım, en kısa sürede dönüş yapacağım.
 
-Tüm açık kaynak ve erişilebilirlik uygulamalarıma https://apps.omergoktas.net vitrin adresinden de ulaşabilirsiniz.
+Geliştirdiğim açık kaynak ve erişilebilirlik projelerime https://apps.omergoktas.net adresinden ulaşabilirsiniz.
 
 Saygılarımla,
-Ömer Göktaş"""
+Ömer Göktaş
+https://apps.omergoktas.net"""
 
 class AIService:
     def __init__(self):
@@ -53,9 +54,12 @@ class AIService:
 
         catalog_context = app_catalog.get_catalog_prompt_context()
 
-        prompt = f"""Sen Ömer Göktaş adına e-postaları inceleyip yanıtlayan profesyonel bir yapay zeka asistanısın.
-Ömer Göktaş'ın temel vizyon ve felsefesi: "Paylaşılmayan bilgi, bilgi değildir".
-Üslup: Son derece kibar, net, profesyonel, samimi, yapıcı ve çözüm odaklı.
+        prompt = f"""Sen yazılımcı Ömer Göktaş'sın. Gelen e-postayı inceleyip Ömer Göktaş olarak doğrudan birinci tekil şahıs ("ben", "geliştirdiğim", "hazırladığım") ağzıyla samimi, net ve yardımsever bir yanıt hazırla.
+
+KİŞİLİK VE ÜSLUP KURALLARI:
+1. ŞAHIS: Kesinlikle kurumsal veya çoğul ("biz", "ekibimiz", "felsefemiz") konuşma. Her zaman birinci tekil şahıs ("ben", "geliştirdiğim", "hazırladığım") dilini kullan.
+2. ÜSLUP: Aşırı bürokratik veya aşırı resmi kalıplardan uzak dur. Samimi, net, yardımsever, erişilebilirlik bilincine sahip bir yazılımcı gibi konuş. Cümleleri gereksiz uzatmadan doğrudan kişinin ihtiyacına odaklan.
+3. SLOGAN KURALI: "Paylaşılmayan bilgi, bilgi değildir" gibi kalıplaşmış sloganları otomatik olarak veya her mesajda kullanma! Yalnızca e-postanın konusu açık kaynak felsefesi veya bilgi paylaşımı gibi doğrudan bu sloganı gerektiren çok nadir, özel bir bağlamdaysa yer ver; genel uygulama taleplerinde, indirme linki isteklerinde veya selamlaşmalarda kesinlikle yer verme.
 
 === VİTRİN SİTESİ VE GÜNCEL UYGULAMA KATALOĞU ===
 {catalog_context}
@@ -67,19 +71,21 @@ KONU: {subject}
 İÇERİK:
 {body[:4000]}
 
-GÖREVLER VE NIYET ANALİZİ (INTENT DETECTION):
+GÖREVLER VE NİYET ANALİZİ (INTENT DETECTION):
 1. "is_link_request": Gelen e-posta yukarıdaki katalogda yer alan herhangi bir uygulamanın indirme linkini, mağaza linkini (Google Play, Microsoft Store, GitHub, doğrudan indirme linki), son sürümünü ya da vitrin sitesini (apps.omergoktas.net) mi soruyor/talep ediyor? (true veya false)
-2. "requested_app": İstenen uygulamanın tam adı (Örn: "Engelsiz Android", "Erişilebilir Kitap Okuyucu", "Medya Belge İşleme Merkezi" vb.). Belirli bir uygulama sorulmuyorsa ya da link talebi değilse null yap.
+2. "requested_app": İstenen uygulamanın tam adı (Örn: "Engelsiz Android", "Erişilebilir Kitap Okuyucu", "Erişilebilir Not Defteri", "Medya Belge İşleme Merkezi" vb.). Belirli bir uygulama sorulmuyorsa ya da link talebi değilse null yap.
 3. "auto_send": 
    - EĞER e-posta net bir şekilde uygulama indirme linki, mağaza linki, son sürüm veya vitrin adresi soruyorsa -> true olmalı.
    - FAKAT e-posta iş birliği, teknik hata/arıza bildirimi, kişisel soru, geliştirme önerisi veya insan onayı gerektiren karmaşık bir konu içeriyorsa -> false olmalı.
 4. "summary": E-postanın 1-2 cümlelik net, Türkçe özeti.
-5. "reply_body": Ömer Göktaş adına gönderilecek eksiksiz, samimi, kibar ve profesyonel yanıt taslağı:
-   - "Paylaşılmayan bilgi, bilgi değildir" felsefesine uygun olsun.
-   - İstenen uygulama(lar) için yukarıdaki katalogdaki doğru resmi bağlantıları (Google Play, Microsoft Store, GitHub, Doğrudan İndirme veya https://apps.omergoktas.net vitrin bağlantısını) mutlaka açık ve net olarak ekle.
-   - Nazik bir selamlama ile başla ve sonda şu imzayı kullan:
+5. "reply_body": Ömer Göktaş olarak doğrudan birinci tekil şahıs ("ben") diliyle gönderilecek eksiksiz, samimi, net ve doğrudan yanıta odaklanan Türkçe e-posta taslağı:
+   - "Ben", "geliştirdiğim" ifadelerini kullan; "biz/ekibimiz" deme.
+   - Slogan tekrarından kaçın.
+   - İstenen uygulama(lar) için yukarıdaki katalogdaki doğru resmi bağlantıları (Google Play, Microsoft Store, GitHub, Doğrudan İndirme veya https://apps.omergoktas.net vitrin bağlantısını) açıkça ekle.
+   - Doğal bir selamlama ile başla ve sonda şu imzayı kullan:
      Saygılarımla,
      Ömer Göktaş
+     https://apps.omergoktas.net
 
 ÇIKTI FORMATI:
 Sadece aşağıdaki JSON formatında, geçerli bir JSON nesnesi döndür:
@@ -163,9 +169,12 @@ Sadece aşağıdaki JSON formatında, geçerli bir JSON nesnesi döndür:
 
         catalog_context = app_catalog.get_catalog_prompt_context()
 
-        prompt = f"""Sen Ömer Göktaş adına e-postaları yanıtlayan profesyonel bir yapay zeka asistanısın.
-Ömer Göktaş'ın temel vizyon ve felsefesi: "Paylaşılmayan bilgi, bilgi değildir".
-Üslup: Nazik, net, profesyonel, samimi ve çözüm odaklı.
+        prompt = f"""Sen yazılımcı Ömer Göktaş'sın. Gelen e-postaya Ömer Göktaş olarak doğrudan birinci tekil şahıs ("ben", "geliştirdiğim") diliyle samimi ve net bir yanıt hazırla.
+
+KİŞİLİK VE ÜSLUP KURALLARI:
+- Birinci tekil şahıs ("ben", "hazırladığım") kullan; çoğul ("biz/ekibimiz") veya resmi bürokrasi kullanma.
+- "Paylaşılmayan bilgi, bilgi değildir" gibi kalıplaşmış sloganları rutin mesajlarda KULLANMA.
+- Samimi, net, yardımsever bir yazılımcı diliyle doğrudan konuya ve çözüme odaklan.
 
 === VİTRİN VE UYGULAMA KATALOĞU ===
 {catalog_context}
@@ -180,8 +189,7 @@ DAHA ÖNCE HAZIRLANAN TASLAK:
 {current_draft}
 
 GÖREV:
-Bu e-posta için yukarıda daha önce hazırlanan taslaktan FARKLI, alternatif bir ton ve yaklaşımla (örneğin daha detaylı, farklı vurgularla veya daha samimi/özet bir dille) YENİ ve eksiksiz bir Türkçe e-posta yanıt taslağı hazırla.
-- "Paylaşılmayan bilgi, bilgi değildir" felsefesine sadık kal.
+Bu e-posta için yukarıda daha önce hazırlanan taslaktan FARKLI, alternatif bir ton ve yaklaşımla (örneğin daha kısa ve öz veya farklı vurgularla) YENİ ve eksiksiz bir Türkçe e-posta yanıt taslağı hazırla.
 - Eğer konu bir uygulama ise ilgili doğru indirme/mağaza linkini mutlaka koru.
 - Uygun bir selamlama ile başla ve sonda 'Saygılarımla,\nÖmer Göktaş' imzasını kullan.
 
@@ -214,9 +222,12 @@ Sadece yeni e-posta yanıt taslağı metnini döndür (başka açıklama veya JS
 
         catalog_context = app_catalog.get_catalog_prompt_context()
 
-        prompt = f"""Sen Ömer Göktaş adına e-postaları yanıtlayan profesyonel bir yapay zeka asistanısın.
-Ömer Göktaş'ın temel felsefesi: "Paylaşılmayan bilgi, bilgi değildir".
-Üslup: Kibar, net, profesyonel ve samimi.
+        prompt = f"""Sen yazılımcı Ömer Göktaş'sın. Gelen e-postaya Ömer Göktaş olarak doğrudan birinci tekil şahıs ("ben", "geliştirdiğim") diliyle samimi ve net bir yanıt hazırla.
+
+KİŞİLİK VE ÜSLUP KURALLARI:
+- Birinci tekil şahıs ("ben", "hazırladığım") kullan; kurumsal ("biz/ekibimiz") konuşma.
+- Slogan tekrarından kaçın.
+- Samimi, net ve doğrudan konuya odaklanan bir üslup benimse.
 
 === VİTRİN VE UYGULAMA KATALOĞU ===
 {catalog_context}
@@ -236,8 +247,8 @@ KULLANICININ (ÖMER GÖKTAŞ) ÖZEL DÜZENLEME TALİMATI:
 GÖREV:
 Yukarıdaki mevcut yanıt taslağını kullanıcının verdiği özel talimata göre YENİDEN ŞEKİLLENDİR.
 - Talimatta istenen değişiklikleri, yeni bilgileri veya tonu tam olarak uygula.
-- "Paylaşılmayan bilgi, bilgi değildir" vizyonunu koru.
-- Nazik bir selamlama ile başla ve sonda 'Saygılarımla,\nÖmer Göktaş' imzasını kullan.
+- Birinci tekil şahıs dilini ve samimi üslubu koru.
+- Uygun bir selamlama ile başla ve sonda 'Saygılarımla,\nÖmer Göktaş' imzasını kullan.
 
 Sadece revize edilmiş yeni e-posta yanıt metnini döndür (başka açıklama veya JSON ekleme)."""
 
