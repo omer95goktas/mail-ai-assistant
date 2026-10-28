@@ -329,7 +329,7 @@ def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: st
         clean_to = to_email.strip()
 
     reply_subj = subject.strip()
-    if not reply_subj.lower().startswith("re:"):
+    if in_reply_to and not reply_subj.lower().startswith("re:"):
         reply_subj = f"Re: {reply_subj}"
 
     # 1. Clean sender address and format standard From header
