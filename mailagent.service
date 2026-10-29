@@ -1,16 +1,23 @@
 [Unit]
 Description=Autonomous AI Mail Assistant Telegram Bot (mailagent)
-After=network.target network-online.target
+After=network-online.target
 Wants=network-online.target
+# Never stop retrying, no matter how many restarts
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/opt/mail_assistant
-ExecStart=/opt/mail_assistant/venv/bin/python3 /opt/mail_assistant/main.py
+ExecStart=/opt/mail_assistant/venv/bin/python3 -u /opt/mail_assistant/main.py
 Restart=always
-RestartSec=5s
+RestartSec=10s
 EnvironmentFile=/opt/mail_assistant/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+TimeoutStopSec=30
+KillMode=mixed
+MemoryMax=600M
 StandardOutput=journal
 StandardError=journal
 

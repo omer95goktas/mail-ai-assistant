@@ -1,4 +1,4 @@
-﻿# Environment variables and secrets
+# Environment variables and secrets
 .env
 .env.local
 
@@ -26,3 +26,5 @@ logs/
 .idea/
 .DS_Store
 Thumbs.db
+# Local deployment backups
+backup_*/
