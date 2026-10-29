@@ -1252,6 +1252,52 @@ async def cmd_geri_al(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_approval_keyboard(reply_id)
     )
 
+@admin_only
+async def cmd_bekleyenler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    items = await database.get_pending_list(limit=10)
+    if not items:
+        await update.message.reply_text("📭 Onay bekleyen e-posta taslağı yok.")
+        return
+    await update.message.reply_text(
+        f"📋 <b>Onay bekleyen {len(items)} taslak</b> (en yeniden eskiye). Her birinin altındaki butonlarla işlem yapabilirsiniz.",
+        parse_mode=ParseMode.HTML,
+    )
+    for p in items:
+        text = (
+            f"🆔 <b>ID {p['id']}</b> | 🗓️ {html.escape(str(p.get('created_at') or ''))}\n"
+            f"<b>Kimden:</b> {html.escape(p.get('sender') or '')}\n"
+            f"<b>Konu:</b> {html.escape(p.get('subject') or '(Konusuz)')}\n\n"
+            f"📌 <b>Özet:</b>\n{html.escape(p.get('gemini_summary') or '')}\n\n"
+            f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(safe_html_truncate(p.get('draft_reply') or '', 2500))}"
+        )
+        try:
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=get_approval_keyboard(p["id"]))
+        except BadRequest:
+            await update.message.reply_text(_strip_html(text)[:4000], reply_markup=get_approval_keyboard(p["id"]))
+
+@admin_only
+async def cmd_iptal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    had = False
+    for k in ("custom_reply_id", "custom_chat_id", "custom_message_id",
+              "editing_reply_id", "editing_chat_id", "editing_message_id"):
+        if context.user_data.pop(k, None) is not None:
+            had = True
+    await update.message.reply_text("❌ Aktif yazma/düzenleme modu iptal edildi." if had else "ℹ️ İptal edilecek aktif bir işlem yok.")
+
+@admin_only
+async def cmd_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"❓ Bilinmeyen komut: {update.message.text.split()[0]}\n\n"
+        "Kullanılabilir komutlar:\n"
+        "/bekleyenler - Onay bekleyen taslaklar\n"
+        "/kontrol_et - Gelen kutusunu şimdi tara\n"
+        "/durum - Sistem durumu\n"
+        "/iptaller - İptal edilen yanıtlar\n"
+        "/hesaplar - E-posta hesapları\n"
+        "/vitrin - Uygulama kataloğu\n"
+        "/yardim - Tüm yardım"
+    )
+
 def setup_bot_handlers(application: Application):
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("hesap_ekle", start_hesap_ekle)],
@@ -1271,6 +1317,8 @@ def setup_bot_handlers(application: Application):
     application.add_handler(CommandHandler("hesaplar", cmd_hesaplar))
     application.add_handler(CommandHandler("durum", cmd_durum))
     application.add_handler(CommandHandler("kontrol_et", cmd_kontrol_et))
+    application.add_handler(CommandHandler("bekleyenler", cmd_bekleyenler))
+    application.add_handler(CommandHandler("iptal", cmd_iptal))
     application.add_handler(CommandHandler("iptaller", cmd_iptaller))
     application.add_handler(CommandHandler("geri_al", cmd_geri_al))
     application.add_handler(MessageHandler(filters.Regex(r"^/geri_al_\d+"), cmd_geri_al))
@@ -1282,3 +1330,5 @@ def setup_bot_handlers(application: Application):
     
     # Text handler for custom replies and edit instructions (must be after command/conversation handlers)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text_input))
+    # Catch-all: any unregistered /command gets an answer instead of silence
+    application.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))

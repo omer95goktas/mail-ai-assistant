@@ -209,6 +209,19 @@ async def get_pending_reply(reply_id: int):
         row = await cursor.fetchone()
         return dict(row) if row else None
 
+async def get_pending_list(limit: int = 10):
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT p.*, a.email_address
+            FROM pending_replies p
+            JOIN accounts a ON p.account_id = a.id
+            WHERE p.status = 'PENDING'
+            ORDER BY p.id DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(r) for r in await cursor.fetchall()]
+
 async def get_latest_pending_reply():
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
