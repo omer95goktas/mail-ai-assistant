@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 from google import genai
 from google.genai import types
@@ -9,12 +9,13 @@ logger = logging.getLogger(__name__)
 
 FALLBACK_REPLY_TEMPLATE = """Merhaba,
 
-E-postanız için teşekkür ederim. İletinizi aldım, en kısa sürede dönüş yapacağım.
+Ben Ömer Bey'in yapay zekâ asistanıyım. E-postanızı aldım ve Ömer Bey'e ilettim; en kısa sürede size dönüş yapılacaktır.
 
-Geliştirdiğim açık kaynak ve erişilebilirlik projelerime https://apps.omergoktas.net adresinden ulaşabilirsiniz.
+Bu yanıt Ömer Bey'in kontrolü ve onayı doğrultusunda hazırlanmıştır. Sistemdeki her işlem Ömer Bey'in denetimindedir ve gerekli durumlarda kendisi doğrudan iletişime geçecektir.
 
 Saygılarımla,
-Ömer Göktaş
+Gemini (Ömer Göktaş Asistanı)
+Onaylayan: Ömer Göktaş
 https://apps.omergoktas.net"""
 
 class AIService:
@@ -98,7 +99,7 @@ Sadece aşağıdaki JSON formatında, geçerli bir JSON nesnesi döndür:
   "auto_send": true
 }}
 """
-        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]
+        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
         seen_models = set()
         unique_models = []
         for m in models_to_try:
@@ -203,11 +204,11 @@ DAHA ÖNCE HAZIRLANAN TASLAK:
 GÖREV:
 Bu e-posta için yukarıda daha önce hazırlanan taslaktan FARKLI, alternatif bir ton ve yaklaşımla (örneğin daha kısa ve öz veya farklı vurgularla) YENİ ve eksiksiz bir Türkçe e-posta yanıt taslağı hazırla.
 - Eğer konu bir uygulama ise ilgili doğru indirme/mağaza linkini mutlaka koru.
-- Uygun bir selamlama ile başla ve sonda 'Saygılarımla,\nÖmer Göktaş' imzasını kullan.
+- Uygun bir selamlama ile başla ve sonda yukarıda belirtilen resmi imzayı (Gemini (Ömer Göktaş Asistanı) / Onaylayan: Ömer Göktaş) aynen kullan.
 
 Sadece yeni e-posta yanıt taslağı metnini döndür (başka açıklama veya JSON ekleme)."""
 
-        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]
+        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
         seen_models = set()
         unique_models = [m for m in models_to_try if m and not (m in seen_models or seen_models.add(m))]
         for m in unique_models:
@@ -271,11 +272,11 @@ GÖREV:
 Yukarıdaki mevcut yanıt taslağını kullanıcının verdiği özel talimata göre YENİDEN ŞEKİLLENDİR.
 - Talimatta istenen değişiklikleri, yeni bilgileri veya tonu tam olarak uygula.
 - Birinci tekil şahıs dilini ve samimi üslubu koru.
-- Uygun bir selamlama ile başla ve sonda 'Saygılarımla,\nÖmer Göktaş' imzasını kullan.
+- Uygun bir selamlama ile başla ve sonda yukarıda belirtilen resmi imzayı (Gemini (Ömer Göktaş Asistanı) / Onaylayan: Ömer Göktaş) aynen kullan.
 
 Sadece revize edilmiş yeni e-posta yanıt metnini döndür (başka açıklama veya JSON ekleme)."""
 
-        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]
+        models_to_try = [self.model, "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"]
         seen_models = set()
         unique_models = [m for m in models_to_try if m and not (m in seen_models or seen_models.add(m))]
         for m in unique_models:

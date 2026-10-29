@@ -7,6 +7,7 @@ from email.mime.multipart import MIMEMultipart
 from email.utils import formatdate, make_msgid, parseaddr, formataddr
 import re
 import html
+import time
 import logging
 from bs4 import BeautifulSoup
 import config
@@ -155,95 +156,103 @@ def test_account_connection(email_address: str, imap_server: str, imap_port: int
 
     return True, "Bağlantı başarılı."
 
-def fetch_unseen_emails(account: dict):
-    r"""
-    Connects to account IMAP in read-write mode, fetches UNSEEN emails,
-    marks them as \Seen immediately in the SAME session to prevent queue choking,
-    applies mailing list and blacklist filters, and returns email objects.
-    """
-    results = []
+def _imap_connect(account: dict, timeout: int = 20):
     imap_server = account["imap_server"]
     imap_port = int(account["imap_port"])
-    email_address = account["email_address"]
-    app_password = account["app_password"]
+    if imap_port == 993:
+        mail = imaplib.IMAP4_SSL(imap_server, imap_port, timeout=timeout)
+    else:
+        mail = imaplib.IMAP4(imap_server, imap_port, timeout=timeout)
+        mail.starttls()
+    mail.login(account["email_address"], account["app_password"])
+    return mail
 
+def _imap_close(mail):
+    if not mail:
+        return
+    for fn in (mail.close, mail.logout):
+        try:
+            fn()
+        except Exception:
+            pass
+
+def fetch_unseen_emails(account: dict):
+    r"""
+    Fetches UNSEEN emails using UID + BODY.PEEK (does NOT set \Seen).
+    The caller must persist them to the durable queue first and THEN call
+    mark_uids_seen(). This guarantees an e-mail is never lost if the process
+    crashes, Gemini times out or Telegram is unreachable.
+    Raises on connection/login errors so the caller can track IMAP health.
+    """
+    results = []
     mail = None
     try:
-        if imap_port == 993:
-            mail = imaplib.IMAP4_SSL(imap_server, imap_port, timeout=12)
-        else:
-            mail = imaplib.IMAP4(imap_server, imap_port, timeout=12)
-            mail.starttls()
-        mail.login(email_address, app_password)
+        mail = _imap_connect(account)
         mail.select("INBOX", readonly=False)
 
-        status, messages = mail.search(None, "UNSEEN")
-        if status != "OK" or not messages[0]:
+        status, messages = mail.uid("search", None, "UNSEEN")
+        if status != "OK" or not messages or not messages[0]:
             return results
 
-        mail_ids = messages[0].split()
-        # Newest emails are at the end; inspect newest first (limit to last 15)
-        recent_ids = list(reversed(mail_ids))[:15]
-        for m_id in recent_ids:
+        uids = messages[0].split()
+        # Newest first, max 15 per cycle (rest is picked up next cycle)
+        for uid in list(reversed(uids))[:15]:
             try:
-                res, data = mail.fetch(m_id, "(BODY.PEEK[])")
-                if res != "OK":
+                res, data = mail.uid("fetch", uid, "(BODY.PEEK[])")
+                if res != "OK" or not data:
                     continue
-
                 for response_part in data:
-                    if isinstance(response_part, tuple):
-                        raw_email = response_part[1]
-                        msg = email.message_from_bytes(raw_email)
+                    if not isinstance(response_part, tuple):
+                        continue
+                    msg = email.message_from_bytes(response_part[1])
 
-                        msg_id = decode_mime_words(msg.get("Message-ID", "")).strip()
-                        if not msg_id:
-                            msg_id = f"uid-{m_id.decode()}-{account['id']}"
+                    msg_id = decode_mime_words(msg.get("Message-ID", "")).strip()
+                    if not msg_id:
+                        msg_id = f"uid-{uid.decode()}-{account['id']}"
 
-                        sender = decode_mime_words(msg.get("From", "")).strip()
-                        subject = decode_mime_words(msg.get("Subject", "(Konusuz)")).strip()
-                        date_str = decode_mime_words(msg.get("Date", "")).strip()
-                        
-                        # Filter check
-                        is_ignored, ignore_reason = is_mailing_list_or_ignored(msg)
+                    sender = decode_mime_words(msg.get("From", "")).strip() or "(Bilinmeyen gönderen)"
+                    subject = decode_mime_words(msg.get("Subject", "")).strip() or "(Konusuz)"
+                    is_ignored, ignore_reason = is_mailing_list_or_ignored(msg)
 
-                        body = ""
-                        if not is_ignored:
+                    body = ""
+                    if not is_ignored:
+                        try:
                             body = extract_body(msg)
+                        except Exception as e_body:
+                            logger.warning(f"Body extraction failed for {msg_id}: {e_body}")
+                            body = "(İçerik okunamadı)"
 
-                        results.append({
-                            "message_id": msg_id,
-                            "sender": sender,
-                            "subject": subject,
-                            "body": body,
-                            "date": date_str,
-                            "raw_num": m_id.decode(),
-                            "is_ignored": is_ignored,
-                            "ignore_reason": ignore_reason
-                        })
-                
-                # Mark as \Seen immediately inside the same IMAP connection!
-                try:
-                    mail.store(m_id, "+FLAGS", "\\Seen")
-                except Exception as ex_seen:
-                    logger.warning(f"Could not mark mail {m_id} as \\Seen: {ex_seen}")
-
+                    results.append({
+                        "uid": uid.decode(),
+                        "message_id": msg_id,
+                        "sender": sender,
+                        "subject": subject,
+                        "body": body,
+                        "is_ignored": is_ignored,
+                        "ignore_reason": ignore_reason
+                    })
             except Exception as e:
-                logger.error(f"Error fetching mail id {m_id}: {e}")
-
-    except Exception as e:
-        logger.error(f"IMAP fetch error for account {email_address}: {e}")
+                logger.error(f"Error fetching UID {uid}: {e}")
     finally:
-        if mail:
-            try:
-                mail.close()
-            except Exception:
-                pass
-            try:
-                mail.logout()
-            except Exception:
-                pass
+        _imap_close(mail)
 
     return results
+
+def mark_uids_seen(account: dict, uids: list) -> bool:
+    r"""Marks the given UIDs as \Seen in a single IMAP session."""
+    if not uids:
+        return True
+    mail = None
+    try:
+        mail = _imap_connect(account)
+        mail.select("INBOX", readonly=False)
+        mail.uid("store", ",".join(uids), "+FLAGS", "(\\Seen)")
+        return True
+    except Exception as e:
+        logger.warning(f"Could not mark UIDs {uids} as seen: {e}")
+        return False
+    finally:
+        _imap_close(mail)
 
 def mark_email_as_seen(account: dict, message_id: str):
     r"""
@@ -451,21 +460,46 @@ def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: st
     part_html = MIMEText(html_content, "html", "utf-8")
     msg.attach(part_html)
 
-    try:
-        if smtp_port == 465:
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=25)
-            server.ehlo()
-        else:
-            server = smtplib.SMTP(smtp_server, smtp_port, timeout=25)
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
+    last_err = None
+    for attempt in range(1, 4):
+        server = None
+        stage = "connect"
+        try:
+            if smtp_port == 465:
+                server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=30)
+                server.ehlo()
+            else:
+                server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
 
-        server.login(email_address, app_password)
-        server.send_message(msg)
-        server.quit()
-        logger.info(f"Successfully sent reply to {clean_to} from {email_address} (Message-ID: {msg['Message-ID']})")
-        return True, "E-posta başarıyla gönderildi."
-    except Exception as e:
-        logger.error(f"Failed to send email via SMTP {smtp_server}:{smtp_port}: {e}")
-        return False, str(e)
+            stage = "login"
+            server.login(email_address, app_password)
+            stage = "send"
+            refused = server.send_message(msg)
+            if refused:
+                return False, f"Alıcı reddedildi: {refused}"
+            logger.info(f"Successfully sent reply to {clean_to} from {email_address} (Message-ID: {msg['Message-ID']})")
+            return True, "E-posta başarıyla gönderildi."
+        except smtplib.SMTPAuthenticationError as e:
+            logger.error(f"SMTP auth failed: {e}")
+            return False, f"SMTP kimlik doğrulama hatası (uygulama şifresi geçersiz olabilir): {e}"
+        except smtplib.SMTPRecipientsRefused as e:
+            return False, f"Alıcı adresi reddedildi: {e}"
+        except Exception as e:
+            last_err = e
+            logger.warning(f"SMTP attempt {attempt} failed at stage '{stage}': {e}")
+            # Never retry once DATA was transmitted -> avoids duplicate e-mails
+            if stage == "send":
+                return False, f"Gönderim sırasında bağlantı koptu (tekrar denenmedi, mükerrer gönderim riski): {e}"
+            time.sleep(2 * attempt)
+        finally:
+            if server:
+                try:
+                    server.quit()
+                except Exception:
+                    pass
+
+    logger.error(f"Failed to send email via SMTP {smtp_server}:{smtp_port}: {last_err}")
+    return False, str(last_err)

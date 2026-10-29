@@ -54,6 +54,63 @@ async def init_db():
             );
         """)
 
+        # --- MIGRATION: relax pending_replies status CHECK (SEEN/SENDING were rejected -> crash) ---
+        cur = await db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='pending_replies'")
+        row = await cur.fetchone()
+        if row and "'SEEN'" not in (row[0] or ""):
+            await db.commit()
+            await db.execute("PRAGMA foreign_keys = OFF")
+            await db.execute("""
+                CREATE TABLE pending_replies_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                    message_id TEXT,
+                    sender TEXT NOT NULL,
+                    subject TEXT,
+                    incoming_snippet TEXT,
+                    gemini_summary TEXT,
+                    draft_reply TEXT,
+                    status TEXT CHECK(status IN ('PENDING','SENDING','SENT','CANCELLED','SEEN')) DEFAULT 'PENDING',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            await db.execute("""
+                INSERT INTO pending_replies_new (id, account_id, message_id, sender, subject, incoming_snippet,
+                                                 gemini_summary, draft_reply, status, created_at)
+                SELECT id, account_id, message_id, sender, subject, incoming_snippet,
+                       gemini_summary, draft_reply, status, created_at FROM pending_replies
+            """)
+            await db.execute("DROP TABLE pending_replies")
+            await db.execute("ALTER TABLE pending_replies_new RENAME TO pending_replies")
+            await db.commit()
+            await db.execute("PRAGMA foreign_keys = ON")
+
+        # --- DURABLE INBOX QUEUE: no fetched e-mail can ever be lost ---
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS inbox_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL,
+                message_id TEXT NOT NULL,
+                sender TEXT,
+                subject TEXT,
+                body TEXT,
+                status TEXT DEFAULT 'QUEUED',
+                attempts INTEGER DEFAULT 0,
+                last_error TEXT,
+                pending_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(account_id, message_id)
+            );
+        """)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_queue_status ON inbox_queue(status)")
+
+        # Recover rows stuck in SENDING (process died mid-send)
+        await db.execute("UPDATE pending_replies SET status='PENDING' WHERE status='SENDING'")
+
+        # Housekeeping: keep tables small forever
+        await db.execute("DELETE FROM processed_messages WHERE created_at < datetime('now','-120 days')")
+        await db.execute("DELETE FROM inbox_queue WHERE status='DONE' AND created_at < datetime('now','-30 days')")
+
         # Performance indexes
         await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_replies(status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_pending_account ON pending_replies(account_id)")
@@ -171,6 +228,61 @@ async def update_reply_status(reply_id: int, status: str) -> bool:
         cursor = await db.execute("UPDATE pending_replies SET status = ? WHERE id = ?", (status, reply_id))
         await db.commit()
         return cursor.rowcount > 0
+
+async def claim_reply_for_send(reply_id: int) -> bool:
+    """Atomically PENDING -> SENDING. Returns False if already being sent/sent (prevents double send)."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "UPDATE pending_replies SET status='SENDING' WHERE id=? AND status='PENDING'", (reply_id,)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+# ---------------- Durable inbox queue ----------------
+async def enqueue_incoming(account_id: int, message_id: str, sender: str, subject: str, body: str) -> bool:
+    async with get_db() as db:
+        cursor = await db.execute("""
+            INSERT OR IGNORE INTO inbox_queue (account_id, message_id, sender, subject, body)
+            VALUES (?, ?, ?, ?, ?)
+        """, (account_id, message_id, sender, subject, (body or "")[:20000]))
+        await db.commit()
+        return cursor.rowcount > 0
+
+async def get_queued_items(limit: int = 5):
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT q.*, a.email_address, a.smtp_server, a.smtp_port, a.imap_server, a.imap_port, a.app_password
+            FROM inbox_queue q JOIN accounts a ON q.account_id = a.id
+            WHERE q.status = 'QUEUED' ORDER BY q.id ASC LIMIT ?
+        """, (limit,))
+        return [dict(r) for r in await cursor.fetchall()]
+
+async def set_queue_pending_id(queue_id: int, pending_id: int):
+    async with get_db() as db:
+        await db.execute("UPDATE inbox_queue SET pending_id=? WHERE id=?", (pending_id, queue_id))
+        await db.commit()
+
+async def mark_queue_done(queue_id: int):
+    async with get_db() as db:
+        await db.execute("UPDATE inbox_queue SET status='DONE' WHERE id=?", (queue_id,))
+        await db.commit()
+
+async def mark_queue_failed_attempt(queue_id: int, error: str) -> int:
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE inbox_queue SET attempts = attempts + 1, last_error = ? WHERE id = ?",
+            ((error or "")[:500], queue_id)
+        )
+        await db.commit()
+        cur = await db.execute("SELECT attempts FROM inbox_queue WHERE id=?", (queue_id,))
+        row = await cur.fetchone()
+        return row[0] if row else 0
+
+async def count_queued() -> int:
+    async with get_db() as db:
+        cur = await db.execute("SELECT COUNT(*) FROM inbox_queue WHERE status='QUEUED'")
+        return (await cur.fetchone())[0]
 
 async def update_pending_draft(reply_id: int, new_draft: str) -> bool:
     async with get_db() as db:

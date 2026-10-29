@@ -5,6 +5,7 @@ import psutil
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
+from telegram.error import BadRequest, NetworkError, TimedOut, RetryAfter
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -60,6 +61,100 @@ def get_approval_keyboard(pending_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton("👁️ Okundu Yap", callback_data=f"mark_seen:{pending_id}")
         ]
     ])
+
+# ===================== RELIABILITY HELPERS =====================
+import re as _re
+
+# Only one mail cycle at a time (background loop + /kontrol_et can't race)
+_CYCLE_LOCK = asyncio.Lock()
+
+# IMAP health tracking per account -> alert admin once on persistent failure
+_IMAP_FAILS: dict = {}
+_IMAP_ALERTED: set = set()
+IMAP_ALERT_THRESHOLD = 10  # ~5 min at 30s interval
+
+def _account_from_pending(p: dict) -> dict:
+    return {
+        "id": p["account_id"],
+        "email_address": p["email_address"],
+        "smtp_server": p["smtp_server"],
+        "smtp_port": p["smtp_port"],
+        "imap_server": p["imap_server"],
+        "imap_port": p["imap_port"],
+        "app_password": p["app_password"],
+    }
+
+async def send_pending_safely(pending: dict, body: str):
+    """
+    Atomic, double-click-proof send. PENDING -> SENDING -> SENT (or back to PENDING on failure).
+    """
+    if not await database.claim_reply_for_send(pending["id"]):
+        return False, "Bu e-posta zaten gönderiliyor veya gönderilmiş (mükerrer gönderim engellendi)."
+    ok, err = False, "Bilinmeyen hata"
+    try:
+        ok, err = await asyncio.wait_for(
+            asyncio.to_thread(
+                mail_service.send_reply_email,
+                _account_from_pending(pending),
+                pending["sender"],
+                pending["subject"] or "Re:",
+                pending["message_id"],
+                body,
+            ),
+            timeout=150,
+        )
+    except Exception as e:
+        ok, err = False, f"{type(e).__name__}: {e}"
+        logger.error(f"send_pending_safely error for ID {pending['id']}: {err}", exc_info=True)
+    finally:
+        await database.update_reply_status(pending["id"], "SENT" if ok else "PENDING")
+    return ok, err
+
+def _strip_html(text: str) -> str:
+    return html.unescape(_re.sub(r"<[^>]+>", "", text or ""))
+
+async def safe_send_message(bot, text: str, reply_markup=None, retries: int = 3):
+    """
+    Sends to admin with HTML; if Telegram rejects the HTML (400) falls back to plain text.
+    Retries on network errors. Raises only if every attempt failed.
+    """
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            return await bot.send_message(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID, text=text,
+                parse_mode=ParseMode.HTML, reply_markup=reply_markup,
+            )
+        except BadRequest as e:
+            logger.warning(f"HTML rejected by Telegram ({e}); sending as plain text.")
+            plain = _strip_html(text)[:4000]
+            return await bot.send_message(
+                chat_id=config.TELEGRAM_ADMIN_CHAT_ID, text=plain, reply_markup=reply_markup,
+            )
+        except (NetworkError, TimedOut, RetryAfter) as e:
+            last_exc = e
+            wait = getattr(e, "retry_after", None) or 2 * attempt
+            try:
+                wait = float(wait.total_seconds()) if hasattr(wait, "total_seconds") else float(wait)
+            except Exception:
+                wait = 2 * attempt
+            logger.warning(f"Telegram send attempt {attempt} failed: {e}; retrying in {wait}s")
+            await asyncio.sleep(wait)
+    raise last_exc
+
+async def global_error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    """Never let a handler exception go unnoticed; tell the admin what failed."""
+    logger.error("Unhandled exception in handler", exc_info=context.error)
+    try:
+        if isinstance(context.error, (NetworkError, TimedOut)) and not isinstance(context.error, BadRequest):
+            return  # transient, PTB retries polling itself
+        await context.bot.send_message(
+            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
+            text=f"⚠️ İşlem sırasında beklenmeyen bir hata oluştu, sistem çalışmaya devam ediyor.\n"
+                 f"Hata: {type(context.error).__name__}: {str(context.error)[:300]}",
+        )
+    except Exception:
+        pass
 
 @admin_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -404,7 +499,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if pending["status"] != "PENDING":
-        status_tr = "Gönderilmiş" if pending["status"] == "SENT" else "İptal Edilmiş"
+        status_tr = {"SENT": "Gönderilmiş", "SEEN": "Okundu işaretlenmiş",
+                     "SENDING": "Şu anda gönderiliyor", "CANCELLED": "İptal Edilmiş"}.get(pending["status"], pending["status"])
         await query.answer(f"Bu e-posta zaten işlem görmüş ({status_tr}).", show_alert=True)
         try:
             await query.edit_message_reply_markup(reply_markup=None)
@@ -424,14 +520,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             "app_password": pending["app_password"]
         }
 
-        sent_ok, err_str = await asyncio.to_thread(
-            mail_service.send_reply_email,
-            account,
-            pending["sender"],
-            pending["subject"] or "Re:",
-            pending["message_id"],
-            pending["draft_reply"]
-        )
+        sent_ok, err_str = await send_pending_safely(pending, pending["draft_reply"])
+
 
         if sent_ok:
             await asyncio.to_thread(mail_service.mark_email_as_seen, account, pending["message_id"])
@@ -645,14 +735,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "app_password": pending["app_password"]
         }
 
-        sent_ok, err_str = await asyncio.to_thread(
-            mail_service.send_reply_email,
-            account,
-            pending["sender"],
-            pending["subject"] or "Re:",
-            pending["message_id"],
-            custom_text
-        )
+        sent_ok, err_str = await send_pending_safely(pending, custom_text)
+
 
         orig_chat_id = context.user_data.pop("custom_chat_id", None)
         orig_msg_id = context.user_data.pop("custom_message_id", None)
@@ -710,10 +794,10 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
     # 3. PRIORITY: Natural language text commands (e.g. "mail gönder", "gönder", "onayla", "okundu yap", "durum")
     raw_text = update.message.text.strip()
-    lower_text = raw_text.lower()
+    lower_text = _re.sub(r"[^\w ]", "", raw_text.replace("İ", "i").replace("I", "ı").lower()).strip()
 
     # Command: Send / Approve pending mail
-    if any(w in lower_text for w in ["mail gönder", "mail gonder", "gönder", "gonder", "onayla", "yanıtla", "yanitla", "yolla"]):
+    if lower_text in {"mail gönder", "mail gonder", "gönder", "gonder", "onayla", "yolla", "maili gönder", "taslağı gönder"}:
         pending = await database.get_latest_pending_reply()
         if not pending:
             await update.message.reply_text(
@@ -739,14 +823,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "app_password": pending["app_password"]
         }
 
-        sent_ok, err_str = await asyncio.to_thread(
-            mail_service.send_reply_email,
-            account,
-            pending["sender"],
-            pending["subject"] or "Re:",
-            pending["message_id"],
-            pending["draft_reply"]
-        )
+        sent_ok, err_str = await send_pending_safely(pending, pending["draft_reply"])
+
 
         try:
             await wait_msg.delete()
@@ -772,7 +850,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     # Command: Mark seen
-    elif any(w in lower_text for w in ["okundu yap", "okundu", "okundu işaretle", "kapat", "göz ardı et"]):
+    elif lower_text in {"okundu yap", "okundu", "okundu işaretle", "göz ardı et"}:
         pending = await database.get_latest_pending_reply()
         if not pending:
             await update.message.reply_text(
@@ -800,7 +878,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     # Command: Regenerate
-    elif any(w in lower_text for w in ["yeniden üret", "tekrar üret", "yenile", "yeniden yaz"]):
+    elif lower_text in {"yeniden üret", "tekrar üret", "yenile", "yeniden yaz"}:
         pending = await database.get_latest_pending_reply()
         if not pending:
             await update.message.reply_text(
@@ -922,118 +1000,188 @@ async def handle_edit_instruction(update: Update, context: ContextTypes.DEFAULT_
     )
 
 # Email checking and autonomous dispatch cycle
-async def check_emails_cycle(bot) -> int:
-    accounts = await database.get_accounts(active_only=True)
-    if not accounts:
-        return 0
+# ------------------------------------------------------------------
+# PHASE 1 (fetch):  IMAP UNSEEN -> durable SQLite queue -> only THEN mark \Seen
+# PHASE 2 (process): queue -> Gemini -> pending_replies -> Telegram -> DONE
+# A crash / timeout at ANY point leaves the mail in the queue and it is
+# retried next cycle. Nothing fetched can be silently lost anymore.
+# ------------------------------------------------------------------
+MAX_PROCESS_ATTEMPTS = 3
 
-    ai_service = AIService()
-    new_found = 0
+async def _fetch_phase(bot, acc: dict) -> None:
+    acc_key = acc["id"]
+    try:
+        emails = await asyncio.wait_for(
+            asyncio.to_thread(mail_service.fetch_unseen_emails, acc), timeout=90
+        )
+    except Exception as e:
+        fails = _IMAP_FAILS.get(acc_key, 0) + 1
+        _IMAP_FAILS[acc_key] = fails
+        logger.warning(f"IMAP fetch failed for {acc['email_address']} ({fails}x): {type(e).__name__}: {e}")
+        if fails >= IMAP_ALERT_THRESHOLD and acc_key not in _IMAP_ALERTED:
+            _IMAP_ALERTED.add(acc_key)
+            try:
+                await safe_send_message(
+                    bot,
+                    f"⚠️ <b>E-posta sunucusuna ulaşılamıyor</b>\n"
+                    f"<b>Hesap:</b> <code>{html.escape(acc['email_address'])}</code>\n"
+                    f"<b>Ardışık hata:</b> {fails}\n"
+                    f"<b>Son hata:</b> <code>{html.escape(str(e)[:200])}</code>\n\n"
+                    f"Sistem denemeye devam ediyor; bağlantı düzelince bildirilecek. "
+                    f"Uygulama şifresi değiştiyse /hesap_ekle ile güncelleyin."
+                )
+            except Exception:
+                pass
+        return
 
-    for acc in accounts:
+    # Healthy again -> recovery notice
+    if acc_key in _IMAP_ALERTED:
+        _IMAP_ALERTED.discard(acc_key)
         try:
-            unseen_emails = await asyncio.to_thread(mail_service.fetch_unseen_emails, acc)
-            for m in unseen_emails:
-                msg_id = m["message_id"]
-                if await database.is_message_processed(acc["id"], msg_id):
-                    continue
+            await safe_send_message(bot, f"✅ <b>E-posta bağlantısı yeniden sağlandı:</b> <code>{html.escape(acc['email_address'])}</code>")
+        except Exception:
+            pass
+    _IMAP_FAILS[acc_key] = 0
 
-                sender = m["sender"]
-                subject = m["subject"]
-
-                # 1. STEP: MAILING LIST & BULK IGNORE FILTER (FIRST STEP BEFORE GEMINI)
-                if m.get("is_ignored"):
-                    reason = m.get("ignore_reason") or "Mailing List / Kara Liste"
-                    logger.info(f"🚫 [FİLTRE - YOK SAYILDI] Konu: '{subject}' | Gönderen: '{sender}' | Sebep: {reason}")
-                    await database.mark_message_processed(acc["id"], msg_id)
-                    continue
-
+    safe_uids = []
+    for m in emails:
+        msg_id = m["message_id"]
+        try:
+            if await database.is_message_processed(acc["id"], msg_id):
+                safe_uids.append(m["uid"])
+                continue
+            if m.get("is_ignored"):
+                logger.info(f"🚫 [FİLTRE] '{m['subject']}' | {m['sender']} | {m.get('ignore_reason')}")
                 await database.mark_message_processed(acc["id"], msg_id)
-
-                body = m["body"]
-
-                # 2. STEP: Gemini analysis with dynamic app catalog
-                ai_res = await asyncio.to_thread(ai_service.analyze_email, sender, subject, body)
-                summary = ai_res.get("summary", "")
-                reply_body = ai_res.get("reply_body", "")
-                is_link_request = ai_res.get("is_link_request", False)
-                requested_app = ai_res.get("requested_app")
-                auto_send = ai_res.get("auto_send", False)
-                error_note = ai_res.get("error_note")
-
-                # Store pending reply in DB
-                pending_id = await database.add_pending_reply(
-                    account_id=acc["id"],
-                    message_id=msg_id,
-                    sender=sender,
-                    subject=subject,
-                    incoming_snippet=body[:500],
-                    gemini_summary=summary,
-                    draft_reply=reply_body
-                )
-
-                # 3. STEP: AUTONOMOUS AUTO-REPLY LOGIC
-                if auto_send:
-                    logger.info(f"🚀 Auto-reply triggered for '{subject}' from '{sender}' (Requested app: {requested_app})")
-                    sent_ok, err_str = await asyncio.to_thread(
-                        mail_service.send_reply_email,
-                        acc,
-                        sender,
-                        subject,
-                        msg_id,
-                        reply_body
-                    )
-
-                    if sent_ok:
-                        await asyncio.to_thread(mail_service.mark_email_as_seen, acc, msg_id)
-                        await database.update_reply_status(pending_id, "SENT")
-
-                        app_label = requested_app or "Uygulama / Vitrin"
-                        report_text = (
-                            f"🚀 <b>[Otomatik Yanıt Gönderildi]</b>\n"
-                            f"<b>Hesap:</b> <code>{html.escape(acc['email_address'])}</code>\n"
-                            f"<b>Kimden:</b> {html.escape(sender)}\n"
-                            f"<b>Konu:</b> {html.escape(subject)}\n"
-                            f"<b>İşlem:</b> <i>{html.escape(app_label)}</i> için güncel indirme bağlantısı iletildi.\n\n"
-                            f"📌 <b>Özet:</b>\n{html.escape(summary)}\n\n"
-                            f"✍️ <b>İletilen Yanıt:</b>\n{html.escape(safe_html_truncate(reply_body, 2500))}"
-                        )
-
-                        await bot.send_message(
-                            chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-                            text=report_text,
-                            parse_mode=ParseMode.HTML
-                        )
-                        new_found += 1
-                        continue
-                    else:
-                        logger.error(f"Auto-send failed via SMTP: {err_str}. Falling back to manual approval.")
-
-                # 4. STEP: MANUAL APPROVAL FLOW WITH 4 BUTTONS
-                note_html = f"\n\n<i>{html.escape(error_note)}</i>" if error_note else ""
-                notification_text = (
-                    f"📩 <b>Yeni E-posta!</b> (Hesap: <code>{html.escape(acc['email_address'])}</code>)\n"
-                    f"<b>Kimden:</b> {html.escape(sender)}\n"
-                    f"<b>Konu:</b> {html.escape(subject)}\n\n"
-                    f"📌 <b>Özet:</b>\n{html.escape(summary)}\n\n"
-                    f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(safe_html_truncate(reply_body, 2500))}"
-                    f"{note_html}"
-                )
-
-                await bot.send_message(
-                    chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
-                    text=notification_text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=get_approval_keyboard(pending_id)
-                )
-                new_found += 1
+                safe_uids.append(m["uid"])
+                continue
+            await database.enqueue_incoming(acc["id"], msg_id, m["sender"], m["subject"], m["body"])
+            await database.mark_message_processed(acc["id"], msg_id)
+            safe_uids.append(m["uid"])  # persisted -> safe to mark seen
         except Exception as e:
-            logger.error(f"Error checking emails for {acc.get('email_address')}: {e}", exc_info=True)
+            logger.error(f"Could not persist mail {msg_id}: {e}", exc_info=True)  # stays UNSEEN -> retried
 
-    return new_found
+    if safe_uids:
+        await asyncio.wait_for(asyncio.to_thread(mail_service.mark_uids_seen, acc, safe_uids), timeout=60)
+
+async def _process_queue_item(bot, item: dict, ai_service) -> bool:
+    """Returns True when the item has been fully delivered to the admin."""
+    acc = _account_from_pending(item)
+    sender, subject, body = item["sender"] or "", item["subject"] or "(Konusuz)", item["body"] or ""
+
+    # Already analyzed in a previous (interrupted) run -> just re-notify
+    if item.get("pending_id"):
+        pending = await database.get_pending_reply(item["pending_id"])
+        if pending:
+            await safe_send_message(
+                bot,
+                f"📩 <b>Yeni E-posta!</b> (Hesap: <code>{html.escape(acc['email_address'])}</code>)\n"
+                f"<b>Kimden:</b> {html.escape(sender)}\n<b>Konu:</b> {html.escape(subject)}\n\n"
+                f"📌 <b>Özet:</b>\n{html.escape(pending.get('gemini_summary') or '')}\n\n"
+                f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(safe_html_truncate(pending.get('draft_reply') or '', 2500))}",
+                reply_markup=get_approval_keyboard(pending["id"]),
+            )
+            return True
+
+    force_fallback = (item.get("attempts") or 0) >= MAX_PROCESS_ATTEMPTS - 1
+    if force_fallback:
+        from ai_service import FALLBACK_REPLY_TEMPLATE
+        ai_res = {"summary": f"{subject} konulu e-posta ({sender}).", "reply_body": FALLBACK_REPLY_TEMPLATE,
+                  "auto_send": False, "requested_app": None,
+                  "error_note": f"⚠️ Gemini {MAX_PROCESS_ATTEMPTS} denemede yanıt üretemedi; standart şablon kullanıldı. Son hata: {item.get('last_error') or '-'}"}
+    else:
+        ai_res = await asyncio.wait_for(
+            asyncio.to_thread(ai_service.analyze_email, sender, subject, body), timeout=120
+        )
+
+    summary = ai_res.get("summary", "") or f"{subject} ({sender})"
+    reply_body = ai_res.get("reply_body", "") or ""
+    requested_app = ai_res.get("requested_app")
+    auto_send = bool(ai_res.get("auto_send", False))
+    error_note = ai_res.get("error_note")
+
+    pending_id = await database.add_pending_reply(
+        account_id=item["account_id"], message_id=item["message_id"], sender=sender, subject=subject,
+        incoming_snippet=body[:500], gemini_summary=summary, draft_reply=reply_body,
+    )
+    await database.set_queue_pending_id(item["id"], pending_id)
+
+    if auto_send and reply_body:
+        logger.info(f"🚀 Auto-reply triggered for '{subject}' from '{sender}' (app: {requested_app})")
+        pending = await database.get_pending_reply(pending_id)
+        sent_ok, err_str = await send_pending_safely(pending, reply_body)
+        if sent_ok:
+            await safe_send_message(
+                bot,
+                f"🚀 <b>[Otomatik Yanıt Gönderildi]</b>\n"
+                f"<b>Hesap:</b> <code>{html.escape(acc['email_address'])}</code>\n"
+                f"<b>Kimden:</b> {html.escape(sender)}\n<b>Konu:</b> {html.escape(subject)}\n"
+                f"<b>İşlem:</b> <i>{html.escape(requested_app or 'Uygulama / Vitrin')}</i> için bağlantı iletildi.\n\n"
+                f"📌 <b>Özet:</b>\n{html.escape(summary)}\n\n"
+                f"✍️ <b>İletilen Yanıt:</b>\n{html.escape(safe_html_truncate(reply_body, 2500))}"
+            )
+            return True
+        logger.error(f"Auto-send failed: {err_str}. Falling back to manual approval.")
+        error_note = f"⚠️ Otomatik gönderim başarısız: {err_str[:150]}. Lütfen manuel onaylayın."
+
+    note_html = f"\n\n<i>{html.escape(error_note)}</i>" if error_note else ""
+    await safe_send_message(
+        bot,
+        f"📩 <b>Yeni E-posta!</b> (Hesap: <code>{html.escape(acc['email_address'])}</code>)\n"
+        f"<b>Kimden:</b> {html.escape(sender)}\n<b>Konu:</b> {html.escape(subject)}\n\n"
+        f"📌 <b>Özet:</b>\n{html.escape(summary)}\n\n"
+        f"✍️ <b>Önerilen Yanıt:</b>\n{html.escape(safe_html_truncate(reply_body, 2500))}{note_html}",
+        reply_markup=get_approval_keyboard(pending_id),
+    )
+    return True
+
+async def _process_phase(bot) -> int:
+    items = await database.get_queued_items(limit=5)
+    if not items:
+        return 0
+    ai_service = AIService()
+    done = 0
+    for item in items:
+        try:
+            if await _process_queue_item(bot, item, ai_service):
+                await database.mark_queue_done(item["id"])
+                done += 1
+        except Exception as e:
+            attempts = await database.mark_queue_failed_attempt(item["id"], f"{type(e).__name__}: {e}")
+            logger.error(f"Queue item {item['id']} failed (attempt {attempts}): {e}", exc_info=True)
+            if attempts >= MAX_PROCESS_ATTEMPTS + 2:
+                # Last resort: never drop silently; tell the admin and close the item.
+                try:
+                    await safe_send_message(
+                        bot,
+                        f"❗ <b>Bir e-posta işlenemedi</b>\n<b>Kimden:</b> {html.escape(item.get('sender') or '')}\n"
+                        f"<b>Konu:</b> {html.escape(item.get('subject') or '')}\n"
+                        f"<b>Hata:</b> <code>{html.escape(str(e)[:200])}</code>\n"
+                        f"Lütfen gelen kutunuzdan manuel kontrol edin."
+                    )
+                    await database.mark_queue_done(item["id"])
+                except Exception:
+                    pass
+    return done
+
+async def check_emails_cycle(bot) -> int:
+    if _CYCLE_LOCK.locked():
+        logger.info("Previous mail cycle still running; skipping this tick.")
+        return 0
+    async with _CYCLE_LOCK:
+        accounts = await database.get_accounts(active_only=True)
+        for acc in accounts:
+            try:
+                await _fetch_phase(bot, acc)
+            except Exception as e:
+                logger.error(f"Fetch phase error for {acc.get('email_address')}: {e}", exc_info=True)
+        return await _process_phase(bot)
 
 @admin_only
 async def cmd_kontrol_et(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if _CYCLE_LOCK.locked():
+        await update.message.reply_text("⏳ Şu anda otomatik tarama zaten çalışıyor, sonuçlar birazdan gelecek.")
+        return
     await update.message.reply_text("🔍 <i>E-posta hesapları taranıyor, lütfen bekleyiniz...</i>", parse_mode=ParseMode.HTML)
     count = await check_emails_cycle(context.bot)
     if count == 0:
@@ -1130,6 +1278,7 @@ def setup_bot_handlers(application: Application):
     application.add_handler(MessageHandler(filters.Regex(r"^/hesap_sil_\d+"), cmd_hesap_sil))
     application.add_handler(MessageHandler(filters.Regex(r"^/durum_degis_\d+"), cmd_durum_degis))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
+    application.add_error_handler(global_error_handler)
     
     # Text handler for custom replies and edit instructions (must be after command/conversation handlers)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text_input))

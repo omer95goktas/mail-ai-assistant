@@ -42,17 +42,20 @@ async def background_loop(app: Application):
     await asyncio.sleep(3)
     while True:
         try:
-            # 35s hard timeout protects against any stuck network socket
-            await asyncio.wait_for(check_emails_cycle(app.bot), timeout=35.0)
-            update_heartbeat()
+            # Each step has its own timeout; this is only a last-resort guard.
+            # Interruption is safe: unprocessed mails stay in the durable queue.
+            await asyncio.wait_for(check_emails_cycle(app.bot), timeout=300.0)
         except asyncio.TimeoutError:
-            logger.warning("Email check cycle timed out after 35s. Socket will reset and retry next cycle.")
+            logger.warning("Email cycle exceeded 300s; queue preserved, continuing next tick.")
         except asyncio.CancelledError:
             logger.info("Background email check loop cancelled.")
             break
         except Exception as e:
             logger.error(f"Error in background cycle: {e}", exc_info=True)
-        
+        finally:
+            # Heartbeat = "event loop alive", written every tick no matter what.
+            update_heartbeat()
+
         try:
             await asyncio.sleep(config.CHECK_INTERVAL)
         except asyncio.CancelledError:
@@ -102,6 +105,11 @@ def main():
     application = (
         Application.builder()
         .token(config.TELEGRAM_BOT_TOKEN)
+        .connect_timeout(20)
+        .read_timeout(30)
+        .write_timeout(30)
+        .pool_timeout(20)
+        .get_updates_read_timeout(40)
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()
