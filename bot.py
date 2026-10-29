@@ -437,16 +437,21 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await asyncio.to_thread(mail_service.mark_email_as_seen, account, pending["message_id"])
             await database.update_reply_status(reply_id, "SENT")
 
-            original_text = query.message.text or ""
+            orig_escaped = html.escape(query.message.text or "")
             updated_text = (
-                f"{original_text}\n\n"
+                f"{orig_escaped}\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"✅ <b>YANIT GÖNDERİLDİ</b>\n"
                 f"🗓️ <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>"
             )
             try:
                 await query.edit_message_text(text=updated_text, parse_mode=ParseMode.HTML, reply_markup=None)
-            except Exception:
+            except Exception as e_edit:
+                logger.error(f"Could not edit message: {e_edit}")
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
                 await query.message.reply_text(f"✅ <b>ID {reply_id} yanıtı başarıyla gönderildi!</b>", parse_mode=ParseMode.HTML)
         else:
             await query.message.reply_text(
@@ -513,9 +518,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await asyncio.to_thread(mail_service.mark_email_as_seen, account, pending["message_id"])
         await database.update_reply_status(reply_id, "SEEN")
 
-        original_text = query.message.text or ""
+        orig_escaped = html.escape(query.message.text or "")
         updated_text = (
-            f"{original_text}\n\n"
+            f"{orig_escaped}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👁️ <b>OKUNDU OLARAK İŞARETLENDİ</b>\n"
             f"🗓️ <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>\n"
@@ -524,6 +529,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             await query.edit_message_text(text=updated_text, parse_mode=ParseMode.HTML, reply_markup=None)
         except Exception:
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
             await query.message.reply_text(f"👁️ <b>ID {reply_id} okundu olarak işaretlendi.</b>", parse_mode=ParseMode.HTML)
 
     elif action == "edit":
@@ -544,9 +553,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.answer("Yanıt iptal edildi.")
         await database.update_reply_status(reply_id, "CANCELLED")
 
-        original_text = query.message.text or ""
+        orig_escaped = html.escape(query.message.text or "")
         updated_text = (
-            f"{original_text}\n\n"
+            f"{orig_escaped}\n\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"❌ <b>YANIT İPTAL EDİLDİ</b>\n"
             f"🗓️ <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>\n"
@@ -558,6 +567,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         try:
             await query.edit_message_text(text=updated_text, parse_mode=ParseMode.HTML, reply_markup=restore_markup)
         except Exception:
+            try:
+                await query.edit_message_reply_markup(reply_markup=restore_markup)
+            except Exception:
+                pass
             await query.message.reply_text(
                 f"❌ <b>ID {reply_id} yanıtı iptal edildi.</b>",
                 parse_mode=ParseMode.HTML,
