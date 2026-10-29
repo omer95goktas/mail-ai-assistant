@@ -8,6 +8,16 @@ from telegram.ext import Application
 import config
 import database
 from bot import setup_bot_handlers, check_emails_cycle
+import time
+from pathlib import Path
+
+HEARTBEAT_FILE = Path("/tmp/mailagent.heartbeat")
+
+def update_heartbeat():
+    try:
+        HEARTBEAT_FILE.write_text(str(time.time()), encoding="utf-8")
+    except Exception as e:
+        pass
 
 # Setup logging with RotatingFileHandler to avoid unbounded disk usage
 file_handler = logging.handlers.RotatingFileHandler(
@@ -34,6 +44,7 @@ async def background_loop(app: Application):
         try:
             # 35s hard timeout protects against any stuck network socket
             await asyncio.wait_for(check_emails_cycle(app.bot), timeout=35.0)
+            update_heartbeat()
         except asyncio.TimeoutError:
             logger.warning("Email check cycle timed out after 35s. Socket will reset and retry next cycle.")
         except asyncio.CancelledError:
@@ -51,6 +62,7 @@ async def background_loop(app: Application):
 async def post_init(application: Application):
     logger.info("Initializing database...")
     await database.init_db()
+    update_heartbeat()
     logger.info("Starting background worker task...")
     task = asyncio.create_task(background_loop(application))
     application.bot_data["bg_task"] = task
