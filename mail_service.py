@@ -157,9 +157,9 @@ def test_account_connection(email_address: str, imap_server: str, imap_port: int
 
 def fetch_unseen_emails(account: dict):
     r"""
-    Connects to account IMAP, looks for UNSEEN emails without marking them seen (BODY.PEEK).
-    Applies mailing list and blacklist filters.
-    Returns list of dicts: [ {message_id, sender, subject, body, date, is_ignored, ignore_reason} ]
+    Connects to account IMAP in read-write mode, fetches UNSEEN emails,
+    marks them as \Seen immediately in the SAME session to prevent queue choking,
+    applies mailing list and blacklist filters, and returns email objects.
     """
     results = []
     imap_server = account["imap_server"]
@@ -167,30 +167,23 @@ def fetch_unseen_emails(account: dict):
     email_address = account["email_address"]
     app_password = account["app_password"]
 
+    mail = None
     try:
         if imap_port == 993:
-            mail = imaplib.IMAP4_SSL(imap_server, imap_port, timeout=20)
+            mail = imaplib.IMAP4_SSL(imap_server, imap_port, timeout=12)
         else:
-            mail = imaplib.IMAP4(imap_server, imap_port, timeout=20)
+            mail = imaplib.IMAP4(imap_server, imap_port, timeout=12)
             mail.starttls()
         mail.login(email_address, app_password)
-        mail.select("INBOX", readonly=True)
+        mail.select("INBOX", readonly=False)
 
         status, messages = mail.search(None, "UNSEEN")
         if status != "OK" or not messages[0]:
-            try:
-                mail.close()
-            except Exception:
-                pass
-            try:
-                mail.logout()
-            except Exception:
-                pass
             return results
 
         mail_ids = messages[0].split()
-        # Newest emails are at the end; inspect newest first (limit to last 20 for fast response)
-        recent_ids = list(reversed(mail_ids))[:20]
+        # Newest emails are at the end; inspect newest first (limit to last 15)
+        recent_ids = list(reversed(mail_ids))[:15]
         for m_id in recent_ids:
             try:
                 res, data = mail.fetch(m_id, "(BODY.PEEK[])")
@@ -227,54 +220,37 @@ def fetch_unseen_emails(account: dict):
                             "is_ignored": is_ignored,
                             "ignore_reason": ignore_reason
                         })
+                
+                # Mark as \Seen immediately inside the same IMAP connection!
+                try:
+                    mail.store(m_id, "+FLAGS", "\\Seen")
+                except Exception as ex_seen:
+                    logger.warning(f"Could not mark mail {m_id} as \\Seen: {ex_seen}")
+
             except Exception as e:
                 logger.error(f"Error fetching mail id {m_id}: {e}")
 
-        try:
-            mail.close()
-            mail.logout()
-        except Exception:
-            pass
-
     except Exception as e:
         logger.error(f"IMAP fetch error for account {email_address}: {e}")
+    finally:
+        if mail:
+            try:
+                mail.close()
+            except Exception:
+                pass
+            try:
+                mail.logout()
+            except Exception:
+                pass
 
     return results
 
 def mark_email_as_seen(account: dict, message_id: str):
     r"""
-    Connects to account IMAP in read-write mode, locates the email by Message-ID,
-    and adds the \Seen flag.
+    Helper to mark an email as seen. Since fetch_unseen_emails marks emails
+    as \Seen directly during the fetch cycle, this is a fast no-op fallback.
     """
-    imap_server = account["imap_server"]
-    imap_port = int(account["imap_port"])
-    email_address = account["email_address"]
-    app_password = account["app_password"]
-
-    try:
-        if imap_port == 993:
-            mail = imaplib.IMAP4_SSL(imap_server, imap_port, timeout=20)
-        else:
-            mail = imaplib.IMAP4(imap_server, imap_port, timeout=20)
-            mail.starttls()
-        mail.login(email_address, app_password)
-        mail.select("INBOX", readonly=False)
-
-        status, data = mail.search(None, f'HEADER Message-ID "{message_id}"')
-        if status == "OK" and data[0]:
-            for num in data[0].split():
-                mail.store(num, "+FLAGS", "\\Seen")
-                logger.info(f"Marked mail {num} (Message-ID: {message_id}) as \\Seen")
-        
-        try:
-            mail.close()
-            mail.logout()
-        except Exception:
-            pass
-        return True
-    except Exception as e:
-        logger.error(f"Failed to mark email as seen for {email_address}: {e}")
-        return False
+    return True
 
 def format_signature_html(text: str) -> tuple[str, str]:
     """

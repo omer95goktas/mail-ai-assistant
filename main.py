@@ -29,10 +29,13 @@ logger = logging.getLogger("mailagent")
 
 async def background_loop(app: Application):
     logger.info(f"Background email check loop running every {config.CHECK_INTERVAL} seconds.")
-    await asyncio.sleep(5)
+    await asyncio.sleep(3)
     while True:
         try:
-            await check_emails_cycle(app.bot)
+            # 35s hard timeout protects against any stuck network socket
+            await asyncio.wait_for(check_emails_cycle(app.bot), timeout=35.0)
+        except asyncio.TimeoutError:
+            logger.warning("Email check cycle timed out after 35s. Socket will reset and retry next cycle.")
         except asyncio.CancelledError:
             logger.info("Background email check loop cancelled.")
             break
