@@ -424,6 +424,7 @@ def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: st
     # 3. Create MIMEMultipart('alternative') with text/plain + text/html
     msg = MIMEMultipart("alternative")
     msg["From"] = formataddr((str(Header("Ömer Göktaş", "utf-8")), sender_email))
+    msg["Reply-To"] = sender_email
     msg["To"] = clean_to
     msg["Subject"] = reply_subj
     msg["Date"] = formatdate(localtime=True)

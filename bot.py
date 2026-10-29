@@ -452,7 +452,20 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     await query.edit_message_reply_markup(reply_markup=None)
                 except Exception:
                     pass
-                await query.message.reply_text(f"✅ <b>ID {reply_id} yanıtı başarıyla gönderildi!</b>", parse_mode=ParseMode.HTML)
+
+            # ALWAYS send a new message in chat for screen readers and push notification
+            await query.message.reply_text(
+                f"✅ <b>E-posta Başarıyla Gönderildi!</b>\n\n"
+                f"<b>Alıcı:</b> {html.escape(pending['sender'])}\n"
+                f"<b>Konu:</b> {html.escape(pending['subject'] or 'Re:')}\n"
+                f"<b>Gönderen Hesap:</b> <code>{html.escape(pending['email_address'])}</code>\n"
+                f"🕒 <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>",
+                parse_mode=ParseMode.HTML
+            )
+            try:
+                await query.answer("✅ E-posta başarıyla gönderildi!", show_alert=True)
+            except Exception:
+                pass
         else:
             await query.message.reply_text(
                 f"❌ <b>Gönderim Hatası:</b>\n<code>{html.escape(err_str)}</code>",
@@ -489,6 +502,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             )
         except Exception as e:
             logger.error(f"Error updating message after regen: {e}")
+
+        await query.message.reply_text(
+            f"🔄 <b>ID {reply_id} İçin Yeni Yanıt Taslağı Hazırlandı!</b>\n\n"
+            f"Yukarıdaki bildirim mesajı yenilenen taslakla güncellendi. Yeni taslağı inceleyip onaylayabilirsiniz.",
+            parse_mode=ParseMode.HTML
+        )
+        try:
+            await query.answer("🔄 Yeni yanıt taslağı hazırlandı!", show_alert=True)
+        except Exception:
+            pass
 
     elif action == "custom":
         await query.answer()
@@ -533,7 +556,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 await query.edit_message_reply_markup(reply_markup=None)
             except Exception:
                 pass
-            await query.message.reply_text(f"👁️ <b>ID {reply_id} okundu olarak işaretlendi.</b>", parse_mode=ParseMode.HTML)
+
+        await query.message.reply_text(
+            f"👁️ <b>E-posta Okundu Olarak İşaretlendi.</b>\n\n"
+            f"<b>Gönderen:</b> {html.escape(pending['sender'])}\n"
+            f"<b>Konu:</b> {html.escape(pending['subject'])}\n"
+            f"<i>(Herhangi bir yanıt gönderilmedi)</i>",
+            parse_mode=ParseMode.HTML
+        )
+        try:
+            await query.answer("👁️ Okundu olarak işaretlendi!", show_alert=True)
+        except Exception:
+            pass
 
     elif action == "edit":
         await query.answer()
@@ -673,6 +707,146 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
     if editing_id:
         await handle_edit_instruction(update, context)
         return
+
+    # 3. PRIORITY: Natural language text commands (e.g. "mail gönder", "gönder", "onayla", "okundu yap", "durum")
+    raw_text = update.message.text.strip()
+    lower_text = raw_text.lower()
+
+    # Command: Send / Approve pending mail
+    if any(w in lower_text for w in ["mail gönder", "mail gonder", "gönder", "gonder", "onayla", "yanıtla", "yanitla", "yolla"]):
+        pending = await database.get_latest_pending_reply()
+        if not pending:
+            await update.message.reply_text(
+                "ℹ️ <b>Onay bekleyen herhangi bir e-posta taslağı bulunmuyor.</b>\n\n"
+                "Yeni bir e-posta geldiğinde onay butonlarıyla birlikte size bildirilecektir.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+
+        reply_id = pending["id"]
+        wait_msg = await update.message.reply_text(
+            f"📤 <i>ID {reply_id} yanıtı ({pending['sender']}) gönderiliyor...</i>",
+            parse_mode=ParseMode.HTML
+        )
+
+        account = {
+            "id": pending["account_id"],
+            "email_address": pending["email_address"],
+            "smtp_server": pending["smtp_server"],
+            "smtp_port": pending["smtp_port"],
+            "imap_server": pending["imap_server"],
+            "imap_port": pending["imap_port"],
+            "app_password": pending["app_password"]
+        }
+
+        sent_ok, err_str = await asyncio.to_thread(
+            mail_service.send_reply_email,
+            account,
+            pending["sender"],
+            pending["subject"] or "Re:",
+            pending["message_id"],
+            pending["draft_reply"]
+        )
+
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+        if sent_ok:
+            await asyncio.to_thread(mail_service.mark_email_as_seen, account, pending["message_id"])
+            await database.update_reply_status(reply_id, "SENT")
+            await update.message.reply_text(
+                f"✅ <b>E-posta Başarıyla Gönderildi!</b>\n\n"
+                f"<b>Alıcı:</b> {html.escape(pending['sender'])}\n"
+                f"<b>Konu:</b> {html.escape(pending['subject'] or 'Re:')}\n"
+                f"<b>Gönderen Hesap:</b> <code>{html.escape(pending['email_address'])}</code>\n"
+                f"🕒 <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ <b>Gönderim Hatası:</b>\n<code>{html.escape(err_str)}</code>",
+                parse_mode=ParseMode.HTML
+            )
+        return
+
+    # Command: Mark seen
+    elif any(w in lower_text for w in ["okundu yap", "okundu", "okundu işaretle", "kapat", "göz ardı et"]):
+        pending = await database.get_latest_pending_reply()
+        if not pending:
+            await update.message.reply_text(
+                "ℹ️ Şu anda bekleyen bir e-posta bulunmuyor.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        reply_id = pending["id"]
+        account = {
+            "id": pending["account_id"],
+            "email_address": pending["email_address"],
+            "imap_server": pending["imap_server"],
+            "imap_port": pending["imap_port"],
+            "app_password": pending["app_password"]
+        }
+        await asyncio.to_thread(mail_service.mark_email_as_seen, account, pending["message_id"])
+        await database.update_reply_status(reply_id, "SEEN")
+        await update.message.reply_text(
+            f"👁️ <b>ID {reply_id} okundu olarak işaretlendi!</b>\n\n"
+            f"<b>Gönderen:</b> {html.escape(pending['sender'])}\n"
+            f"<b>Konu:</b> {html.escape(pending['subject'])}\n"
+            f"<i>(Herhangi bir yanıt gönderilmedi)</i>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Command: Regenerate
+    elif any(w in lower_text for w in ["yeniden üret", "tekrar üret", "yenile", "yeniden yaz"]):
+        pending = await database.get_latest_pending_reply()
+        if not pending:
+            await update.message.reply_text(
+                "ℹ️ Şu anda bekleyen bir e-posta bulunmuyor.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        reply_id = pending["id"]
+        wait_msg = await update.message.reply_text(
+            f"🔄 <i>ID {reply_id} için yeni yanıt taslağı üretiliyor...</i>",
+            parse_mode=ParseMode.HTML
+        )
+        ai_service = AIService()
+        new_draft = await asyncio.to_thread(
+            ai_service.regenerate_reply,
+            pending["sender"],
+            pending["subject"],
+            pending["incoming_snippet"] or "",
+            pending["draft_reply"] or ""
+        )
+        await database.update_pending_draft(reply_id, new_draft)
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+        await update.message.reply_text(
+            f"🔄 <b>ID {reply_id} İçin Yeni Yanıt Taslağı:</b>\n\n"
+            f"{html.escape(safe_html_truncate(new_draft, 2500))}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_approval_keyboard(reply_id)
+        )
+        return
+
+    # Default fallback for free text
+    await update.message.reply_text(
+        "🤖 <b>E-posta Asistanı</b>\n\n"
+        "Şu anda aktif bir metin düzenleme modunda değilsiniz.\n\n"
+        "<b>Kullanabileceğiniz hızlı işlemler:</b>\n"
+        "• <b>gönder</b> veya <b>onayla</b> - Bekleyen son taslağı hemen gönderir\n"
+        "• <b>okundu yap</b> - Bekleyen son postayı okundu olarak kapatır\n"
+        "• <b>yeniden üret</b> - Son taslağı yeni bir üslupla üretir\n"
+        "• /bekleyenler - Onay bekleyen tüm taslakları listeler\n"
+        "• /durum - Sistem ve servis durumunu görüntüler\n"
+        "• /yardim - Tüm komutların listesi",
+        parse_mode=ParseMode.HTML
+    )
 
 # Message handler for drafting instructions
 @admin_only

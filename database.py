@@ -152,6 +152,20 @@ async def get_pending_reply(reply_id: int):
         row = await cursor.fetchone()
         return dict(row) if row else None
 
+async def get_latest_pending_reply():
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT p.*, a.email_address, a.smtp_server, a.smtp_port, a.imap_server, a.imap_port, a.app_password
+            FROM pending_replies p
+            JOIN accounts a ON p.account_id = a.id
+            WHERE p.status = 'PENDING'
+            ORDER BY p.id DESC
+            LIMIT 1
+        """)
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
 async def update_reply_status(reply_id: int, status: str) -> bool:
     async with get_db() as db:
         cursor = await db.execute("UPDATE pending_replies SET status = ? WHERE id = ?", (status, reply_id))
