@@ -255,36 +255,42 @@ def mark_email_as_seen(account: dict, message_id: str):
 def format_signature_html(text: str) -> tuple[str, str]:
     """
     Extracts the signature from the end of the text and returns (body_text, signature_html).
-    Produces the requested format:
-    <p>Ömer Göktaş<br><a href="https://apps.omergoktas.net">apps.omergoktas.net</a></p>
-    with salutation if present (e.g. Saygılarımla,).
+    Produces the requested transparent signature format:
+    <p>
+    Saygılarımla,<br>
+    Gemini (Ömer Göktaş Asistanı)<br>
+    Onaylayan: Ömer Göktaş<br>
+    <a href="https://apps.omergoktas.net">apps.omergoktas.net</a>
+    </p>
     """
     lines = text.strip().splitlines()
     idx_omer = -1
-    for i in range(len(lines) - 1, max(-1, len(lines) - 6), -1):
+    for i in range(len(lines) - 1, max(-1, len(lines) - 8), -1):
         line_clean = lines[i].strip().lower()
-        if "ömer göktaş" in line_clean or "omer goktas" in line_clean:
+        if "ömer göktaş" in line_clean or "omer goktas" in line_clean or "gemini" in line_clean or "onaylayan" in line_clean:
             idx_omer = i
             break
 
     if idx_omer != -1:
         has_closing = False
         closing_text = ""
-        if idx_omer > 0:
-            prec = lines[idx_omer - 1].strip()
+        # Search backwards from signature for closing phrase (e.g. Saygılarımla)
+        for j in range(idx_omer - 1, max(-1, idx_omer - 4), -1):
+            prec = lines[j].strip()
             if any(prec.lower().startswith(w) for w in ["saygı", "iyi ", "teşekkür", "kolay", "sevgi"]):
                 has_closing = True
                 closing_text = prec
-                body_lines = lines[:idx_omer - 1]
-            else:
-                body_lines = lines[:idx_omer]
-        else:
+                body_lines = lines[:j]
+                break
+        if not has_closing:
             body_lines = lines[:idx_omer]
 
-        closing_html = f"{html.escape(closing_text)}<br>" if has_closing else ""
+        closing_html = f"{html.escape(closing_text)}<br>" if has_closing else "Saygılarımla,<br>"
         sig_html = (
             f'<p style="margin-top: 20px; margin-bottom: 0; line-height: 1.6;">'
-            f'{closing_html}Ömer Göktaş<br>'
+            f'{closing_html}'
+            f'Gemini (Ömer Göktaş Asistanı)<br>'
+            f'Onaylayan: Ömer Göktaş<br>'
             f'<a href="https://apps.omergoktas.net" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">apps.omergoktas.net</a>'
             f'</p>'
         )
@@ -292,7 +298,9 @@ def format_signature_html(text: str) -> tuple[str, str]:
     else:
         sig_html = (
             f'<p style="margin-top: 20px; margin-bottom: 0; line-height: 1.6;">'
-            f'Ömer Göktaş<br>'
+            f'Saygılarımla,<br>'
+            f'Gemini (Ömer Göktaş Asistanı)<br>'
+            f'Onaylayan: Ömer Göktaş<br>'
             f'<a href="https://apps.omergoktas.net" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">apps.omergoktas.net</a>'
             f'</p>'
         )

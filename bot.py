@@ -46,18 +46,18 @@ def safe_html_truncate(text: str, max_chars: int = 3800) -> str:
 
 def get_approval_keyboard(pending_id: int) -> InlineKeyboardMarkup:
     """
-    Returns the 4-button approval keyboard:
-    [✅ Gönder] | [🔄 Farklı Yanıt Üret]
-    [✍️ Talimatla Düzenle] | [❌ İptal]
+    Returns the 4-button interactive approval keyboard:
+    [✅ Onayla] | [✍️ Kendim Yaz]
+    [🔄 Yeniden Üret] | [👁️ Okundu Yap]
     """
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ Gönder", callback_data=f"send:{pending_id}"),
-            InlineKeyboardButton("🔄 Farklı Yanıt Üret", callback_data=f"regen:{pending_id}")
+            InlineKeyboardButton("✅ Onayla", callback_data=f"send:{pending_id}"),
+            InlineKeyboardButton("✍️ Kendim Yaz", callback_data=f"custom:{pending_id}")
         ],
         [
-            InlineKeyboardButton("✍️ Talimatla Düzenle", callback_data=f"edit:{pending_id}"),
-            InlineKeyboardButton("❌ İptal", callback_data=f"cancel:{pending_id}")
+            InlineKeyboardButton("🔄 Yeniden Üret", callback_data=f"regen:{pending_id}"),
+            InlineKeyboardButton("👁️ Okundu Yap", callback_data=f"mark_seen:{pending_id}")
         ]
     ])
 
@@ -485,6 +485,47 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception as e:
             logger.error(f"Error updating message after regen: {e}")
 
+    elif action == "custom":
+        await query.answer()
+        context.user_data["custom_reply_id"] = reply_id
+        context.user_data["custom_chat_id"] = query.message.chat_id
+        context.user_data["custom_message_id"] = query.message.message_id
+
+        prompt_msg = (
+            f"✍️ <b>Özel Yanıt Yazma Modu (ID: {reply_id})</b>\n\n"
+            f"<b>Alıcı:</b> {html.escape(pending['sender'])}\n"
+            f"<b>Konu:</b> {html.escape(pending['subject'] or 'Re:')}\n\n"
+            "Lütfen göndermek istediğiniz yanıt metnini doğrudan buraya yazınız.\n"
+            "Yazdığınız metin <code>mail@omergoktas.net</code> adresinden karşı tarafa iletilecektir.\n\n"
+            "<i>İptal etmek için /iptal yazabilirsiniz.</i>"
+        )
+        await query.message.reply_text(prompt_msg, parse_mode=ParseMode.HTML)
+
+    elif action == "mark_seen":
+        await query.answer("Okundu olarak işaretleniyor...")
+        account = {
+            "id": pending["account_id"],
+            "email_address": pending["email_address"],
+            "imap_server": pending["imap_server"],
+            "imap_port": pending["imap_port"],
+            "app_password": pending["app_password"]
+        }
+        await asyncio.to_thread(mail_service.mark_email_as_seen, account, pending["message_id"])
+        await database.update_reply_status(reply_id, "SEEN")
+
+        original_text = query.message.text or ""
+        updated_text = (
+            f"{original_text}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👁️ <b>OKUNDU OLARAK İŞARETLENDİ</b>\n"
+            f"🗓️ <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>\n"
+            f"<i>(Herhangi bir yanıt gönderilmedi)</i>"
+        )
+        try:
+            await query.edit_message_text(text=updated_text, parse_mode=ParseMode.HTML, reply_markup=None)
+        except Exception:
+            await query.message.reply_text(f"👁️ <b>ID {reply_id} okundu olarak işaretlendi.</b>", parse_mode=ParseMode.HTML)
+
     elif action == "edit":
         await query.answer()
         context.user_data["editing_reply_id"] = reply_id
@@ -522,6 +563,103 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 parse_mode=ParseMode.HTML,
                 reply_markup=restore_markup
             )
+
+# Message handler for custom manual reply or drafting instructions
+@admin_only
+async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 1. PRIORITY: Custom manual reply ("Kendim Yaz" mode)
+    custom_id = context.user_data.get("custom_reply_id")
+    if custom_id:
+        custom_text = update.message.text.strip()
+        if custom_text.lower() in ["/iptal", "iptal"]:
+            context.user_data.pop("custom_reply_id", None)
+            context.user_data.pop("custom_chat_id", None)
+            context.user_data.pop("custom_message_id", None)
+            await update.message.reply_text("❌ Özel yanıt yazma işlemi iptal edildi.")
+            return
+
+        pending = await database.get_pending_reply(custom_id)
+        if not pending or pending["status"] != "PENDING":
+            context.user_data.pop("custom_reply_id", None)
+            context.user_data.pop("custom_chat_id", None)
+            context.user_data.pop("custom_message_id", None)
+            await update.message.reply_text("⚠️ Bu e-posta artık yanıtlanamaz (zaten gönderilmiş veya iptal edilmiş).")
+            return
+
+        wait_msg = await update.message.reply_text("📤 <i>Özel yanıtınız e-posta olarak gönderiliyor...</i>", parse_mode=ParseMode.HTML)
+
+        account = {
+            "id": pending["account_id"],
+            "email_address": pending["email_address"],
+            "smtp_server": pending["smtp_server"],
+            "smtp_port": pending["smtp_port"],
+            "imap_server": pending["imap_server"],
+            "imap_port": pending["imap_port"],
+            "app_password": pending["app_password"]
+        }
+
+        sent_ok, err_str = await asyncio.to_thread(
+            mail_service.send_reply_email,
+            account,
+            pending["sender"],
+            pending["subject"] or "Re:",
+            pending["message_id"],
+            custom_text
+        )
+
+        orig_chat_id = context.user_data.pop("custom_chat_id", None)
+        orig_msg_id = context.user_data.pop("custom_message_id", None)
+        context.user_data.pop("custom_reply_id", None)
+
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+        if sent_ok:
+            await asyncio.to_thread(mail_service.mark_email_as_seen, account, pending["message_id"])
+            await database.update_reply_status(custom_id, "SENT")
+            await database.update_pending_draft(custom_id, custom_text)
+
+            if orig_chat_id and orig_msg_id:
+                try:
+                    updated_text = (
+                        f"📩 <b>E-posta Yanıtlandı!</b> (Hesap: <code>{html.escape(pending['email_address'])}</code>)\n"
+                        f"<b>Kimden:</b> {html.escape(pending['sender'])}\n"
+                        f"<b>Konu:</b> {html.escape(pending['subject'])}\n\n"
+                        f"✍️ <b>Gönderilen Özel Yanıt:</b>\n{html.escape(safe_html_truncate(custom_text, 2500))}\n\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"✅ <b>ÖZEL YANIT GÖNDERİLDİ</b>\n"
+                        f"🗓️ <i>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</i>"
+                    )
+                    await context.bot.edit_message_text(
+                        chat_id=orig_chat_id,
+                        message_id=orig_msg_id,
+                        text=updated_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=None
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not edit original message: {e}")
+
+            await update.message.reply_text(
+                f"✅ <b>Özel yanıtınız başarıyla gönderildi!</b>\n\n"
+                f"<b>Alıcı:</b> {html.escape(pending['sender'])}\n"
+                f"<b>Konu:</b> {html.escape(pending['subject'] or 'Re:')}",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ <b>Gönderim Hatası:</b>\n<code>{html.escape(err_str)}</code>",
+                parse_mode=ParseMode.HTML
+            )
+        return
+
+    # 2. PRIORITY: Edit instruction mode
+    editing_id = context.user_data.get("editing_reply_id")
+    if editing_id:
+        await handle_edit_instruction(update, context)
+        return
 
 # Message handler for drafting instructions
 @admin_only
@@ -806,5 +944,5 @@ def setup_bot_handlers(application: Application):
     application.add_handler(MessageHandler(filters.Regex(r"^/durum_degis_\d+"), cmd_durum_degis))
     application.add_handler(CallbackQueryHandler(handle_callback_query))
     
-    # Text handler for edit instructions (must be after command/conversation handlers)
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_instruction))
+    # Text handler for custom replies and edit instructions (must be after command/conversation handlers)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text_input))
