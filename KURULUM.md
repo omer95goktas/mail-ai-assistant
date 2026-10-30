@@ -1,5 +1,8 @@
 # Kurulum Kılavuzu
 
+> Bu bot **Ömer Göktaş** tarafından geliştirilmiştir.
+> Soru, öneri ve geri bildirimleriniz için: **mail@omergoktas.net**
+
 Bu kılavuz, asistanı **hiç bilmeyen birinin** de kurabilmesi için adım adım yazılmıştır.
 Toplam süre yaklaşık 20–30 dakikadır. Adımları sırayla izleyin.
 
@@ -18,6 +21,7 @@ Toplam süre yaklaşık 20–30 dakikadır. Adımları sırayla izleyin.
 11. Uygulama kataloğu (isteğe bağlı)
 12. Güncelleme, durdurma ve kaldırma
 13. Sorun giderme
+14. Geliştirici ve iletişim
 
 ---
 
@@ -340,3 +344,14 @@ journalctl -u mailagent.service -f                      # canlı izleme (çıkma
 **Bekçi müdahale mesajları sık geliyor**
 - `journalctl -u mailagent.service -n 200` ile hatayı inceleyin. Bekçi, bir saatte 4'ten fazla yeniden
   başlatma olursa sizi ayrıca uyarır; bu genellikle yanlış bir ayara işaret eder.
+
+---
+
+## 14. Geliştirici ve İletişim
+
+Bu bot **Ömer Göktaş** tarafından geliştirilmiştir. *"Paylaşılmayan bilgi, bilgi değildir."* vizyonuyla açık kaynak olarak paylaşılmıştır.
+
+Kurulumla ilgili sorularınız, önerileriniz, hata bildirimleri veya geliştirmeler için doğrudan ulaşabilirsiniz:
+- **E-posta (Öneriler ve İletişim):** `mail@omergoktas.net`
+- **Kişisel Web Sitesi:** [omergoktas.net](https://omergoktas.net)
+- **Uygulama Vitrini:** [apps.omergoktas.net](https://apps.omergoktas.net)

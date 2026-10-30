@@ -132,3 +132,14 @@ catalog.example.json Örnek katalog dosyası
 - E-posta içerikleri özet ve taslak üretmek için Google Gemini API'sine gönderilir.
 - Bot yalnızca `.env` dosyasında tanımlı Telegram kullanıcısına yanıt verir; başkaları kullanamaz.
 - `.env` dosyanızı ve `data/` klasörünü asla paylaşmayın.
+
+---
+
+## Geliştirici ve İletişim
+
+Bu bot **Ömer Göktaş** tarafından geliştirilmiştir. *"Paylaşılmayan bilgi, bilgi değildir."* vizyonuyla açık kaynak olarak sunulmuştur.
+
+Öneri, soru, hata bildirimi ve katkılarınız için:
+- **E-posta:** `mail@omergoktas.net`
+- **Kişisel Web Sitesi:** [omergoktas.net](https://omergoktas.net)
+- **Uygulamalar:** [apps.omergoktas.net](https://apps.omergoktas.net)
