@@ -81,6 +81,7 @@ async def post_init(application: Application):
             BotCommand("hesaplar", "E-posta hesapları"),
             BotCommand("vitrin", "Vitrindeki uygulamalar"),
             BotCommand("iptal", "Yazma modundan çık"),
+            BotCommand("hakkinda", "Geliştirici ve sistem hakkında"),
             BotCommand("yardim", "Yardım ve tüm özellikler"),
         ])
     except Exception as e:

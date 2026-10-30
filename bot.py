@@ -207,13 +207,76 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /iptaller — İptal edilen yanıtlar, /geri_al &lt;id&gt; ile geri alınır\n"
         "• /hesaplar, /hesap_ekle, /hesap_sil &lt;id&gt; — E-posta hesapları\n"
         "• /vitrin — Uygulama kataloğu (tanımlıysa)\n"
+        "• /hakkinda — Geliştirici ve sistem hakkında\n"
         "• /iptal — Yazma/düzenleme modundan çık\n"
         "• /yardim — Bu sayfa\n\n"
         "🛡️ Sistem kendini izler: çökerse otomatik ayağa kalkar, e-postalar kalıcı kuyrukta tutulur, "
         "her gün veritabanı yedeği alınır."
     )
+    help_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("ℹ️ Geliştirici ve Sistem Hakkında", callback_data="about:show")]
+    ])
     await update.effective_message.reply_text(msg1, parse_mode=ParseMode.HTML)
-    await update.effective_message.reply_text(msg2, parse_mode=ParseMode.HTML)
+    await update.effective_message.reply_text(msg2, parse_mode=ParseMode.HTML, reply_markup=help_kb)
+
+
+@admin_only
+async def cmd_hakkinda(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    dev_name = getattr(config, "DEV_NAME", "Ömer Göktaş")
+    dev_website = getattr(config, "DEV_WEBSITE", "https://omergoktas.net")
+    dev_showcase = getattr(config, "DEV_SHOWCASE", "https://apps.omergoktas.net")
+    dev_email = getattr(config, "DEV_EMAIL", "mail@omergoktas.net")
+
+    text = (
+        "🤖 <b>Yapay Zekâ E-posta Asistanı</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Bu asistan; gelen kutunuzu otomatik denetleyen, kişisel e-postalara Gemini yapay zekâ "
+        "modeliyle onaylı yanıt taslakları üreten, e-posta gruplarını okundu sayıp arşivleyen "
+        "ve periyodik özetler sunan otonom bir sistemdir.\n\n"
+        f"👨‍💻 <b>Geliştirici:</b> {html.escape(dev_name)}\n"
+        "💡 <i>\"Paylaşılmayan bilgi, bilgi değildir.\"</i>\n\n"
+        f"🌐 <b>Kişisel Site:</b> {html.escape(dev_website)}\n"
+        f"📱 <b>Uygulama Vitrini:</b> {html.escape(dev_showcase)}\n"
+        f"✉️ <b>İletişim:</b> <code>{html.escape(dev_email)}</code>\n\n"
+        "Aşağıdaki butonları kullanarak web sitelerine doğrudan gidebilir veya iletişim e-postasını kopyalayabilirsiniz:"
+    )
+
+    site_btn_text = dev_website.replace("https://", "").replace("http://", "").rstrip("/")
+    showcase_btn_text = dev_showcase.replace("https://", "").replace("http://", "").rstrip("/")
+
+    keyboard = [
+        [
+            InlineKeyboardButton(f"🌐 {site_btn_text}", url=dev_website),
+            InlineKeyboardButton(f"📱 {showcase_btn_text}", url=dev_showcase),
+        ],
+        [
+            InlineKeyboardButton(f"✉️ {dev_email}", callback_data="about:email"),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+    else:
+        await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=reply_markup)
+
+
+async def handle_about_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data or ""
+    dev_email = getattr(config, "DEV_EMAIL", "mail@omergoktas.net")
+    if data == "about:email":
+        await query.answer(f"📧 {dev_email}", show_alert=True)
+        await query.message.reply_text(
+            f"📬 <b>Geliştirici İletişim E-postası:</b>\n"
+            f"<code>{html.escape(dev_email)}</code>\n\n"
+            "<i>(Adresin üzerine dokunarak kolayca kopyalayabilirsiniz.)</i>",
+            parse_mode=ParseMode.HTML
+        )
+    elif data == "about:show":
+        await query.answer()
+        await cmd_hakkinda(update, context)
+
 
 @admin_only
 async def cmd_vitrin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -833,6 +896,11 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
     raw_text = update.message.text.strip()
     lower_text = _re.sub(r"[^\w ]", "", raw_text.replace("İ", "i").replace("I", "ı").lower()).strip()
 
+    # Command: About / Developer info
+    if lower_text in {"hakkında", "hakkinda", "about", "seni kim yaptı", "seni kim yapti", "geliştirici kim", "gelistirici kim", "ömer göktaş kimdir", "omer goktas kimdir", "yapımcı", "kim geliştirdi", "iletişim", "iletisim"}:
+        await cmd_hakkinda(update, context)
+        return
+
     # Command: Send / Approve pending mail
     if lower_text in {"mail gönder", "mail gonder", "gönder", "gonder", "onayla", "yolla", "maili gönder", "taslağı gönder"}:
         pending = await database.get_latest_pending_reply()
@@ -1420,6 +1488,7 @@ def setup_bot_handlers(application: Application):
     application.add_handler(conv_handler)
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("yardim", cmd_start))
+    application.add_handler(CommandHandler(["hakkinda", "about"], cmd_hakkinda))
     application.add_handler(CommandHandler("vitrin", cmd_vitrin))
     application.add_handler(CommandHandler("hesaplar", cmd_hesaplar))
     application.add_handler(CommandHandler("durum", cmd_durum))
@@ -1431,6 +1500,7 @@ def setup_bot_handlers(application: Application):
     application.add_handler(CommandHandler("kelimeler", cmd_kelimeler))
     application.add_handler(CommandHandler("rapor", cmd_rapor))
     application.add_handler(CallbackQueryHandler(handle_group_callback, pattern=r"^gmode:"))
+    application.add_handler(CallbackQueryHandler(handle_about_callback, pattern=r"^about:"))
     application.add_handler(CommandHandler("iptaller", cmd_iptaller))
     application.add_handler(CommandHandler("geri_al", cmd_geri_al))
     application.add_handler(MessageHandler(filters.Regex(r"^/geri_al_\d+"), cmd_geri_al))

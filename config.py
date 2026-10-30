@@ -60,6 +60,12 @@ RAW_IGNORED_SENDERS = _env("IGNORED_SENDERS", "noreply,no-reply,donotreply,do-no
 IGNORED_DOMAINS = [d.strip().lower() for d in RAW_IGNORED_DOMAINS.split(",") if d.strip()]
 IGNORED_SENDERS = [s.strip().lower() for s in RAW_IGNORED_SENDERS.split(",") if s.strip()]
 
+# ---------------- Geliştirici ve Hakkında Ayarları ----------------
+DEV_NAME = _env("DEV_NAME", "Ömer Göktaş")
+DEV_WEBSITE = _env("DEV_WEBSITE", "https://omergoktas.net")
+DEV_SHOWCASE = _env("DEV_SHOWCASE", "https://apps.omergoktas.net")
+DEV_EMAIL = _env("DEV_EMAIL", "mail@omergoktas.net")
+
 
 def site_host() -> str:
     """CATALOG_SITE_URL / SIGNATURE_URL için 'https://' olmadan alan adı."""
