@@ -160,7 +160,7 @@ async def global_error_handler(update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg1 = (
-        f"👋 <b>{html.escape(config.OWNER_ADDRESS_POSSESSIVE)} E-posta Asistanı — Yardım</b>\n\n"
+        "👋 <b>Yapay Zekâ E-posta Asistanı — Yardım</b>\n\n"
         f"Gelen kutunuzu {config.CHECK_INTERVAL} saniyede bir tarar. Kişisel e-postalara Gemini ile taslak hazırlar, "
         "grup e-postalarını okundu sayıp arşivler ve size özet verir. Bana komut yerine "
         "<b>normal cümlelerle de yazabilirsiniz.</b>\n\n"
