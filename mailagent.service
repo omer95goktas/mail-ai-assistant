@@ -1,18 +1,18 @@
 [Unit]
-Description=Autonomous AI Mail Assistant Telegram Bot (mailagent)
+Description=Yapay Zeka E-posta Asistani (Telegram + Gemini)
 After=network-online.target
 Wants=network-online.target
-# Never stop retrying, no matter how many restarts
+# Kaç kez çökerse çöksün yeniden başlatmaktan vazgeçme
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/mail_assistant
-ExecStart=/opt/mail_assistant/venv/bin/python3 -u /opt/mail_assistant/main.py
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/venv/bin/python3 -u __APP_DIR__/main.py
 Restart=always
 RestartSec=10s
-EnvironmentFile=/opt/mail_assistant/.env
+EnvironmentFile=__APP_DIR__/.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONIOENCODING=utf-8
 TimeoutStopSec=30

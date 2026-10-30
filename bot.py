@@ -160,8 +160,8 @@ async def global_error_handler(update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg1 = (
-        "👋 <b>Ömer Bey'in E-posta Asistanı — Yardım</b>\n\n"
-        "Gelen kutunuzu 30 saniyede bir tarar. Kişisel e-postalara Gemini ile taslak hazırlar, "
+        f"👋 <b>{html.escape(config.OWNER_ADDRESS_POSSESSIVE)} E-posta Asistanı — Yardım</b>\n\n"
+        f"Gelen kutunuzu {config.CHECK_INTERVAL} saniyede bir tarar. Kişisel e-postalara Gemini ile taslak hazırlar, "
         "grup e-postalarını okundu sayıp arşivler ve size özet verir. Bana komut yerine "
         "<b>normal cümlelerle de yazabilirsiniz.</b>\n\n"
         "📩 <b>1. Kişisel e-postalar</b>\n"
@@ -187,15 +187,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     msg2 = (
         "💬 <b>Bana yazabileceğiniz örnek cümleler</b>\n"
-        "• “GEÖP grubundan bana mail atma”\n"
-        "• “Teknokör'den gelenleri hemen bildir”\n"
-        "• “Engelsiz iPhone grubunu özete al”\n"
+        "• “Duyurular grubundan bana mail atma”\n"
+        "• “Destek grubundan gelenleri hemen bildir”\n"
+        "• “Haber grubunu özete al”\n"
         "• “Hangi gruplardan mail geliyor?”\n"
         "• “Şimdi bir özet ver”\n"
         "• “Özetleri 6 saatte bir gönder”\n"
         "• “Sessiz saatler 23 ile 9 arası olsun”\n"
-        "• “Harfoni kelimesini de takip et”\n"
-        "• “Dün GEÖP'te otonom araçlar hakkında ne konuşuldu?”\n\n"
+        "• “Proje adımı da takip et: Örnek Uygulama”\n"
+        "• “Dün destek grubunda hangi sorunlar konuşuldu?”\n\n"
         "📌 <b>Komutlar</b>\n"
         "• /bekleyenler — Onay bekleyen taslaklar\n"
         "• /gruplar — Gruplar ve modları (butonlu)\n"
@@ -206,7 +206,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /durum — Sistem durumu\n"
         "• /iptaller — İptal edilen yanıtlar, /geri_al &lt;id&gt; ile geri alınır\n"
         "• /hesaplar, /hesap_ekle, /hesap_sil &lt;id&gt; — E-posta hesapları\n"
-        "• /vitrin — Vitrindeki uygulamalar\n"
+        "• /vitrin — Uygulama kataloğu (tanımlıysa)\n"
         "• /iptal — Yazma/düzenleme modundan çık\n"
         "• /yardim — Bu sayfa\n\n"
         "🛡️ Sistem kendini izler: çökerse otomatik ayağa kalkar, e-postalar kalıcı kuyrukta tutulur, "
@@ -219,18 +219,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_vitrin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     apps = app_catalog.get_published_apps(force_refresh=True)
     if not apps:
-        await update.message.reply_text("📭 Vitrinde yayında olan uygulama bulunamadı.")
+        await update.message.reply_text("📭 Uygulama kataloğu tanımlı değil veya boş. (.env içinde CATALOG_JSON_PATH ayarlanabilir.)")
         return
 
-    text = f"📱 <b>Vitrin Uygulamaları ({config.SHOWCASE_BASE_URL}):</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+    text = f"📱 <b>Uygulama Kataloğu{(' (' + html.escape(config.CATALOG_SITE_URL) + ')') if config.CATALOG_SITE_URL else ''}:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
     for a in apps:
         platforms = a.get("platforms") or "Tümü"
         version = a.get("version") or "1.0.0"
         text += (
             f"• <b>{html.escape(a['title'])}</b> (v{html.escape(version)} - {html.escape(platforms)})\n"
-            f"  Detay: {a['showcase_url']}\n\n"
+            f"  Detay: {a.get('showcase_url') or '-'}\n\n"
         )
-    text += "<i>Not: Bu veriler apps.sqlite veritabanından dinamik olarak okunur.</i>"
+    text += "<i>Not: Katalog her sorguda güncel olarak okunur.</i>"
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @admin_only
@@ -429,6 +429,12 @@ async def step_smtp(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @admin_only
 async def step_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     password = update.message.text.strip().replace(" ", "")
+    # Güvenlik: şifrenin yazıldığı mesajı sohbetten sil
+    try:
+        await update.message.delete()
+        await update.effective_chat.send_message("🔒 Güvenliğiniz için şifrenizi içeren mesaj sohbetten silindi.")
+    except Exception:
+        await update.effective_chat.send_message("⚠️ Şifre mesajı otomatik silinemedi; lütfen elle silin.")
     acc_data = context.user_data.get("new_acc", {})
     email_addr = acc_data.get("email")
     imap_server = acc_data.get("imap_server")
@@ -436,7 +442,7 @@ async def step_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     smtp_server = acc_data.get("smtp_server")
     smtp_port = acc_data.get("smtp_port")
 
-    await update.message.reply_text("⏳ <i>Bağlantı ayarları test ediliyor, lütfen bekleyiniz...</i>", parse_mode=ParseMode.HTML)
+    await update.effective_chat.send_message("⏳ <i>Bağlantı ayarları test ediliyor, lütfen bekleyiniz...</i>", parse_mode=ParseMode.HTML)
 
     ok, err_msg = await asyncio.to_thread(
         mail_service.test_account_connection,
@@ -444,7 +450,7 @@ async def step_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if not ok:
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             f"❌ <b>Bağlantı Başarısız Oldu!</b>\n\n"
             f"<code>{html.escape(err_msg)}</code>\n\n"
             f"Lütfen şifrenizi kontrol edip tekrar giriniz veya vazgeçmek için /iptal yazınız.",
@@ -464,7 +470,7 @@ async def step_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.clear()
 
-    await update.message.reply_text(
+    await update.effective_chat.send_message(
         f"✅ <b>Hesap Başarıyla Eklendi ve Doğrulandı!</b>\n\n"
         f"• <b>ID:</b> {acc_id}\n"
         f"• <b>E-posta:</b> <code>{html.escape(email_addr)}</code>\n"
@@ -645,7 +651,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"<b>Alıcı:</b> {html.escape(pending['sender'])}\n"
             f"<b>Konu:</b> {html.escape(pending['subject'] or 'Re:')}\n\n"
             "Lütfen göndermek istediğiniz yanıt metnini doğrudan buraya yazınız.\n"
-            "Yazdığınız metin <code>mail@omergoktas.net</code> adresinden karşı tarafa iletilecektir.\n\n"
+            f"Yazdığınız metin <code>{html.escape(pending['email_address'])}</code> adresinden karşı tarafa iletilecektir.\n\n"
             "<i>İptal etmek için /iptal yazabilirsiniz.</i>"
         )
         await query.message.reply_text(prompt_msg, parse_mode=ParseMode.HTML)
@@ -1371,7 +1377,7 @@ async def cmd_kelimeler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔔 <b>Takip edilen anahtar kelimeler</b>\n"
         + ("\n".join(f"• {html.escape(k)}" for k in kws) or "(yok)")
         + "\n\nBu kelimeler herhangi bir grupta geçerse (sessizdeki gruplar dahil) anında haber verilir.\n"
-          "Eklemek/çıkarmak için yazmanız yeterli: “Harfoni kelimesini de takip et” veya “Harfoni'yi takipten çıkar”.",
+          "Eklemek/çıkarmak için yazmanız yeterli: “Örnek Uygulama kelimesini de takip et” veya “Örnek Uygulama'yı takipten çıkar”.",
         parse_mode=ParseMode.HTML)
 
 @admin_only

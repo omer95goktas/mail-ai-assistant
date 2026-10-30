@@ -21,7 +21,7 @@ import urllib.parse
 from pathlib import Path
 from dotenv import load_dotenv
 
-BASE_DIR = Path("/opt/mail_assistant")
+BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -32,7 +32,7 @@ STATE_FILE = BASE_DIR / "data" / "watchdog_state.json"
 BACKUP_DIR = BASE_DIR / "data" / "backups"
 MAX_SILENCE_SECONDS = 300
 MAX_RESTARTS_PER_HOUR = 4
-SERVICE = "mailagent.service"
+SERVICE = os.getenv("SERVICE_NAME", "mailagent.service").strip() or "mailagent.service"
 
 
 def load_state() -> dict:

@@ -190,7 +190,20 @@ def fetch_unseen_emails(account: dict):
         mail = _imap_connect(account)
         mail.select("INBOX", readonly=False)
 
-        status, messages = mail.uid("search", None, "UNSEEN")
+        # Only mails since the day the account was added: a fresh install must not
+        # flood Telegram/Gemini with thousands of old unread mails.
+        criteria = "UNSEEN"
+        created = str(account.get("created_at") or "")[:10]
+        if created:
+            try:
+                from datetime import datetime as _dt
+                months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                d = _dt.strptime(created, "%Y-%m-%d")
+                criteria = f"(UNSEEN SINCE {d.day:02d}-{months[d.month - 1]}-{d.year})"
+            except Exception:
+                pass
+
+        status, messages = mail.uid("search", None, criteria)
         if status != "OK" or not messages or not messages[0]:
             return results
 
@@ -271,66 +284,67 @@ def mark_email_as_seen(account: dict, message_id: str):
     """
     return True
 
+def _signature_html(closing: str = "Saygılarımla,") -> str:
+    url = config.SIGNATURE_URL
+    link = ""
+    if url:
+        host = config.site_host()
+        link = (f'<br><a href="{html.escape(url)}" style="color: #1a73e8; text-decoration: underline;" '
+                f'target="_blank" rel="noopener">{html.escape(host)}</a>')
+    return (
+        f'<p style="margin-top: 20px; margin-bottom: 0; line-height: 1.6;">'
+        f'{html.escape(closing)}<br>'
+        f'{html.escape(config.ASSISTANT_SIGNATURE_NAME)}<br>'
+        f'Onaylayan: {html.escape(config.OWNER_FULL_NAME)}'
+        f'{link}'
+        f'</p>'
+    )
+
+
 def format_signature_html(text: str) -> tuple[str, str]:
     """
-    Extracts the signature from the end of the text and returns (body_text, signature_html).
-    Produces the requested transparent signature format:
-    <p>
-    Saygılarımla,<br>
-    Gemini (Ömer Göktaş Asistanı)<br>
-    Onaylayan: Ömer Göktaş<br>
-    <a href="https://apps.omergoktas.net">apps.omergoktas.net</a>
-    </p>
+    Metnin sonundaki imzayı ayırır; (gövde_metni, imza_html) döndürür.
+    İmza her zaman ayarlardaki biçimle yeniden oluşturulur:
+    Saygılarımla / <asistan adı> / Onaylayan: <sahip> / <isteğe bağlı web adresi>
     """
     lines = text.strip().splitlines()
-    idx_omer = -1
+    markers = [m for m in (
+        config.OWNER_FULL_NAME.lower(),
+        config.ASSISTANT_SIGNATURE_NAME.lower(),
+        "onaylayan",
+        "gemini",
+    ) if m]
+    idx_sig = -1
     for i in range(len(lines) - 1, max(-1, len(lines) - 8), -1):
         line_clean = lines[i].strip().lower()
-        if "ömer göktaş" in line_clean or "omer goktas" in line_clean or "gemini" in line_clean or "onaylayan" in line_clean:
-            idx_omer = i
+        if any(m in line_clean for m in markers):
+            idx_sig = i
             break
 
-    if idx_omer != -1:
-        has_closing = False
-        closing_text = ""
-        # Search backwards from signature for closing phrase (e.g. Saygılarımla)
-        for j in range(idx_omer - 1, max(-1, idx_omer - 4), -1):
-            prec = lines[j].strip()
-            if any(prec.lower().startswith(w) for w in ["saygı", "iyi ", "teşekkür", "kolay", "sevgi"]):
-                has_closing = True
-                closing_text = prec
-                body_lines = lines[:j]
-                break
-        if not has_closing:
-            body_lines = lines[:idx_omer]
+    if idx_sig == -1:
+        return text.strip(), _signature_html()
 
-        closing_html = f"{html.escape(closing_text)}<br>" if has_closing else "Saygılarımla,<br>"
-        sig_html = (
-            f'<p style="margin-top: 20px; margin-bottom: 0; line-height: 1.6;">'
-            f'{closing_html}'
-            f'Gemini (Ömer Göktaş Asistanı)<br>'
-            f'Onaylayan: Ömer Göktaş<br>'
-            f'<a href="https://apps.omergoktas.net" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">apps.omergoktas.net</a>'
-            f'</p>'
-        )
-        return "\n".join(body_lines).strip(), sig_html
-    else:
-        sig_html = (
-            f'<p style="margin-top: 20px; margin-bottom: 0; line-height: 1.6;">'
-            f'Saygılarımla,<br>'
-            f'Gemini (Ömer Göktaş Asistanı)<br>'
-            f'Onaylayan: Ömer Göktaş<br>'
-            f'<a href="https://apps.omergoktas.net" style="color: #1a73e8; text-decoration: underline;" target="_blank" rel="noopener">apps.omergoktas.net</a>'
-            f'</p>'
-        )
-        return text.strip(), sig_html
+    # İmzanın ilk satırını bul (asistan adı / onaylayan / sahip satırlarından en üstteki)
+    start = idx_sig
+    while start - 1 >= 0 and any(m in lines[start - 1].strip().lower() for m in markers):
+        start -= 1
+
+    closing = "Saygılarımla,"
+    body_lines = lines[:start]
+    for j in range(start - 1, max(-1, start - 4), -1):
+        prec = lines[j].strip()
+        if any(prec.lower().startswith(w) for w in ["saygı", "iyi ", "teşekkür", "kolay", "sevgi"]):
+            closing = prec
+            body_lines = lines[:j]
+            break
+    return "\n".join(body_lines).strip(), _signature_html(closing)
 
 def convert_text_to_clean_html(text: str) -> str:
     """
     Converts plain text reply into clean, spam-optimized HTML where no raw URLs appear naked.
     URLs are converted into semantic anchor text (e.g. Uygulama Vitrini, Google Play Mağazası),
     and signature matches:
-    <p>Ömer Göktaş<br><a href="https://apps.omergoktas.net">apps.omergoktas.net</a></p>
+    the configured assistant signature.
     """
     body_text, sig_html = format_signature_html(text)
     body_escaped = html.escape(body_text)
@@ -356,10 +370,11 @@ def convert_text_to_clean_html(text: str) -> str:
     def replace_naked_url(match):
         raw_url = match.group(0)
         url_lower = raw_url.lower()
-        if "apps.omergoktas.net/app/" in url_lower:
+        host = config.site_host().lower()
+        if host and f"{host}/app/" in url_lower:
             anchor = "Uygulama Detay Sayfası"
-        elif "apps.omergoktas.net" in url_lower:
-            anchor = "Uygulama Vitrini"
+        elif host and host in url_lower:
+            anchor = host
         elif "play.google.com" in url_lower:
             anchor = "Google Play Mağazası"
         elif "apps.microsoft.com" in url_lower or "microsoft.com/store" in url_lower:
@@ -436,13 +451,13 @@ def send_reply_email(account: dict, to_email: str, subject: str, in_reply_to: st
         sender_email = email_address.strip()
 
     # 2. Override Message-ID domain to prevent @debian local hostname
-    domain = sender_email.split("@")[-1] if "@" in sender_email else "omergoktas.net"
+    domain = sender_email.split("@")[-1] if "@" in sender_email else ""
     if not domain or domain.lower() in ["localhost", "debian"]:
-        domain = "omergoktas.net"
+        domain = None  # make_msgid falls back to the machine's FQDN
 
     # 3. Create MIMEMultipart('alternative') with text/plain + text/html
     msg = MIMEMultipart("alternative")
-    msg["From"] = formataddr((str(Header("Ömer Göktaş", "utf-8")), sender_email))
+    msg["From"] = formataddr((str(Header(config.MAIL_FROM_NAME, "utf-8")), sender_email))
     msg["Reply-To"] = sender_email
     msg["To"] = clean_to
     msg["Subject"] = reply_subj

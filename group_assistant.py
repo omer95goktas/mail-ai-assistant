@@ -8,7 +8,7 @@ archived and the admin is kept informed like a personal assistant:
 * Keyword alarms (even for silent groups)
 * Quiet hours (no digests at night; accumulated mails come in the morning)
 * Morning report
-* Natural-language control via Gemini ("GEÖP'ten mail atma", "şimdi özet ver" ...)
+* Natural-language control via Gemini ("Duyurular grubundan mail atma", "şimdi özet ver" ...)
 * Q&A over the archived group mails
 """
 import re
@@ -37,7 +37,7 @@ DEFAULT_SETTINGS = {
     "last_digest_ts": "0",
     "last_morning_date": "",
 }
-BASE_KEYWORDS = ["Ömer Göktaş", "Omer Goktas"]
+BASE_KEYWORDS = [k.strip() for k in (config.OWNER_FULL_NAME,) if k.strip() and k.strip() != "Ad Soyad"]
 
 
 # ======================= helpers =======================
@@ -364,9 +364,9 @@ async def build_and_send_digest(bot, send, manual: bool = False) -> bool:
             body = "\n".join(l for l in (it["body"] or "").splitlines() if not l.lstrip().startswith(">"))
             corpus.append(f"- [{it['sender']}] {it['subject']}: {body[:350].strip()}")
     prompt = (
-        "Sen Ömer Bey'in kişisel asistanısın. Aşağıda e-posta gruplarından gelen yeni iletiler var. "
+        f"Sen {config.OWNER_ADDRESS_POSSESSIVE} kişisel asistanısın. Aşağıda e-posta gruplarından gelen yeni iletiler var. "
         "Her grup için Türkçe, kısa ve madde madde bir özet çıkar: hangi konular konuşuldu, öne çıkan "
-        "duyurular, sorular veya Ömer Bey'i ilgilendirebilecek noktalar. Aynı konudaki iletileri birleştir. "
+        f"duyurular, sorular veya {config.OWNER_ADDRESS} için önemli olabilecek noktalar. Aynı konudaki iletileri birleştir. "
         "Her grup için en fazla 5 madde yaz. Ekran okuyucu ile dinleneceği için emoji ve tablo kullanma.\n"
         "Sadece şu JSON'u döndür: {\"groups\": [{\"key\": \"...\", \"bullets\": [\"...\", \"...\"]}]}\n\n"
         + "\n".join(corpus)
@@ -415,7 +415,7 @@ async def build_morning_report(bot, send):
         top = await cur.fetchall()
         kw = (await (await q("SELECT COUNT(*) FROM group_messages WHERE keyword_hit IS NOT NULL AND received_at > datetime('now','-1 day')")).fetchone())[0]
     lines = [
-        f"☀️ <b>Günaydın Ömer Bey! Son 24 saatin raporu</b> ({datetime.now().strftime('%d.%m.%Y')})",
+        f"☀️ <b>Günaydın {esc(config.OWNER_ADDRESS)}! Son 24 saatin raporu</b> ({datetime.now().strftime('%d.%m.%Y')})",
         "",
         f"• Kişisel e-posta: {new_mails} yeni, {sent} yanıtlandı",
         f"• Onay bekleyen taslak: {pending}" + (" (görmek için /bekleyenler)" if pending else ""),
@@ -482,13 +482,13 @@ async def answer_archive(question: str, group_key: str = None, days: int = 7) ->
         f"- ({r['received_at']}) [{r['name']}] {r['sender']} | {r['subject']}: "
         f"{' '.join(l for l in (r['body'] or '').splitlines() if not l.lstrip().startswith('>'))[:400]}"
         for r in rows)
-    prompt = (f"Sen Ömer Bey'in asistanısın. Aşağıdaki grup e-postası arşivine dayanarak soruyu Türkçe, "
+    prompt = (f"Sen {config.OWNER_ADDRESS_POSSESSIVE} asistanısın. Aşağıdaki grup e-postası arşivine dayanarak soruyu Türkçe, "
               f"kısa ve net yanıtla. Arşivde bilgi yoksa açıkça söyle, uydurma. Emoji kullanma.\n\n"
               f"SORU: {question}\n\nARŞİV:\n{corpus}")
     return await gemini(prompt, timeout=120)
 
 
-INTENT_PROMPT = """Sen Ömer Bey'in Telegram üzerinden konuştuğu e-posta asistanısın. Kullanıcının mesajını analiz edip
+INTENT_PROMPT = """Sen {owner} adlı kişinin Telegram üzerinden konuştuğu e-posta asistanısın. Kullanıcının mesajını analiz edip
 yapılacak işlemi JSON olarak döndür.
 
 MEVCUT GRUPLAR (anahtar | ad | mod | son 24 saat ileti):
@@ -511,8 +511,8 @@ OLASI İŞLEMLER (action):
 - "help": ne yapabildiğini sor
 - "chat": yukarıdakilerin hiçbiri; kısa, nazik Türkçe cevabı "reply" alanına yaz
 
-Grup adları kullanıcı tarafından kısaltılabilir veya farklı yazılabilir (örn. "GEÖP" -> görme engelli öğrenciler grubu,
-"teknokör"). En uygun grup anahtar(lar)ını group_keys listesine koy. "tüm gruplar" denirse hepsini koy.
+Grup adları kullanıcı tarafından kısaltılabilir veya farklı yazılabilir (örn. kısaltmalar, Türkçe karakter eksikliği,
+grubun adres adı veya konu etiketindeki kısa adı). En uygun grup anahtar(lar)ını group_keys listesine koy. "tüm gruplar" denirse hepsini koy.
 Emin değilsen group_keys boş bırak ve reply'da hangi grubu kastettiğini sor.
 
 Sadece JSON döndür:
@@ -539,7 +539,7 @@ async def handle_natural_language(text: str, bot, send, pending_handler=None, he
         keywords=", ".join(keywords) or "(yok)",
         interval=await get_setting("digest_interval_hours"),
         qs=await get_setting("quiet_start"), qe=await get_setting("quiet_end"),
-        text=text[:1500],
+        text=text[:1500], owner=config.OWNER_ADDRESS,
     )
     try:
         intent = json.loads(await gemini(prompt, json_mode=True, timeout=60, temperature=0.1))
@@ -568,7 +568,7 @@ async def handle_natural_language(text: str, bot, send, pending_handler=None, he
         await send(bot, f"✅ <b>{names}</b> → {MODES[mode]}\nBu gruptan gelenler {desc}.")
     elif action == "list_groups":
         await send(bot, "📚 <b>Takip edilen gruplar</b>\n\n" + _groups_text(groups) +
-                        "\n\nDeğiştirmek için /gruplar yazın veya örneğin “GEÖP'ü sustur” deyin.")
+                        "\n\nDeğiştirmek için /gruplar yazın veya örneğin “Duyurular grubunu sustur” deyin.")
     elif action == "digest_now":
         await build_and_send_digest(bot, send, manual=True)
     elif action == "set_digest_interval":

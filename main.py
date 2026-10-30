@@ -95,7 +95,7 @@ async def post_init(application: Application):
         await application.bot.send_message(
             chat_id=config.TELEGRAM_ADMIN_CHAT_ID,
             text="🚀 <b>Otonom AI E-posta Asistanı Başlatıldı!</b>\n\n"
-                 "• <b>Sistem:</b> Debian Linux\n"
+                 f"• <b>Sahip:</b> {config.OWNER_FULL_NAME}\n"
                  f"• <b>Kontrol Döngüsü:</b> Her {config.CHECK_INTERVAL} saniyede bir\n"
                  "• <b>Durum:</b> Aktif ve taranıyor\n\n"
                  "Yardım ve komutlar için /yardim yazabilirsiniz.",
