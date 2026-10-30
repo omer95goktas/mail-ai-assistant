@@ -21,6 +21,7 @@ import database
 import mail_service
 from ai_service import AIService
 import app_catalog
+import group_assistant
 
 logger = logging.getLogger(__name__)
 
@@ -158,31 +159,61 @@ async def global_error_handler(update, context: ContextTypes.DEFAULT_TYPE):
 
 @admin_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = (
-        "👋 <b>Otonom AI E-posta Asistanına Hoş Geldiniz!</b>\n\n"
-        "Bu bot, eklediğiniz e-posta hesaplarını arka planda periyodik olarak tarar, "
-        "<b>apps.omergoktas.net</b> vitrinindeki güncel uygulamalarla entegre çalışır "
-        "ve <b>Ömer Göktaş</b> adına <i>'Paylaşılmayan bilgi, bilgi değildir'</i> felsefesiyle yanıtlar üretir.\n\n"
-        "⚡ <b>Akıllı Otonom Yanıt (Auto-Reply):</b>\n"
-        "Gelen e-posta herhangi bir uygulamanın indirme/mağaza linkini veya vitrin adresini soruyorsa "
-        "onay beklemeden doğrudan yanıtlar ve Telegram'a rapor gönderir.\n\n"
-        "🎛️ <b>Gelişmiş Onay Seçenekleri:</b>\n"
-        "• <b>[✅ Gönder]:</b> Hazırlanan yanıtı hemen iletir.\n"
-        "• <b>[🔄 Farklı Yanıt Üret]:</b> Farklı ton ve yaklaşımla yeni taslak oluşturur.\n"
-        "• <b>[✍️ Talimatla Düzenle]:</b> Verdiğiniz özel talimata göre taslağı yeniden şekillendirir.\n"
-        "• <b>[❌ İptal]:</b> Yanıtı göndermeden sonlandırır.\n\n"
-        "📌 <b>Kullanılabilir Komutlar:</b>\n"
-        "• /hesaplar — Kayıtlı e-posta hesaplarını ve durumlarını listeler.\n"
-        "• /hesap_ekle — Yeni bir e-posta hesabı ekler (Sihirbaz).\n"
-        "• /hesap_sil &lt;id&gt; — Belirtilen hesabı kaldırır.\n"
-        "• /vitrin — Vitrinde yayında olan uygulamaları listeler.\n"
-        "• /durum — Sistem kaynakları, bekleyen onaylar ve veritabanı durumu.\n"
-        "• /iptaller — Yanlışlıkla iptal edilen e-postaları listeler.\n"
-        "• /geri_al &lt;id&gt; — İptal edilen e-postayı onay kuyruğuna geri alır.\n"
-        "• /kontrol_et — Tüm hesapları anında manuel olarak kontrol eder.\n"
-        "• /yardim — Bu yardım kılavuzunu görüntüler."
+    msg1 = (
+        "👋 <b>Ömer Bey'in E-posta Asistanı — Yardım</b>\n\n"
+        "Gelen kutunuzu 30 saniyede bir tarar. Kişisel e-postalara Gemini ile taslak hazırlar, "
+        "grup e-postalarını okundu sayıp arşivler ve size özet verir. Bana komut yerine "
+        "<b>normal cümlelerle de yazabilirsiniz.</b>\n\n"
+        "📩 <b>1. Kişisel e-postalar</b>\n"
+        "Her yeni e-posta özet ve önerilen yanıtla gelir. Altındaki butonlar:\n"
+        "• <b>✅ Onayla</b>: Taslağı karşı tarafa gönderir.\n"
+        "• <b>✍️ Kendim Yaz</b>: Sizin yazacağınız metni gönderir (vazgeçmek için /iptal).\n"
+        "• <b>🔄 Yeniden Üret</b>: Farklı üslupla yeni taslak hazırlar.\n"
+        "• <b>👁️ Okundu Yap</b>: Yanıt göndermeden kapatır.\n"
+        "Uygulama indirme linki soran e-postalara otomatik yanıt verilir ve size rapor gelir.\n"
+        "Hızlı yazılı komutlar: <b>gönder</b>, <b>okundu yap</b>, <b>yeniden üret</b> "
+        "(en son bekleyen taslağa uygulanır).\n\n"
+        "📚 <b>2. Grup e-postaları (Google Grupları vb.)</b>\n"
+        "Okundu olarak işaretlenir, arşivlenir. Her grubun bir modu vardır:\n"
+        "• <b>📰 Özet</b> (varsayılan): 3 saatte bir madde madde özet gelir.\n"
+        "• <b>⚡ Anlık</b>: Her ileti hemen size gelir.\n"
+        "• <b>🔕 Sessiz</b>: Hiç bildirim gelmez, sadece arşivlenir.\n"
+        "Modu özetlerin altındaki butonlarla, /gruplar ile veya yazarak değiştirebilirsiniz.\n\n"
+        "🔔 <b>3. Anahtar kelime alarmı</b>\n"
+        "Adınız veya uygulamalarınızın adı herhangi bir grupta geçerse (sessiz gruplar dahil) anında haber verilir.\n\n"
+        "🌙 <b>4. Sessiz saatler</b>: 00:00–08:00 arası özet gönderilmez, birikenler sabah gelir.\n"
+        "☀️ <b>5. Sabah raporu</b>: Her sabah 08:00'den sonra son 24 saatin özeti gelir.\n"
+        "🔍 <b>6. Arşivde soru</b>: Grup e-postaları hakkında soru sorabilirsiniz."
     )
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+    msg2 = (
+        "💬 <b>Bana yazabileceğiniz örnek cümleler</b>\n"
+        "• “GEÖP grubundan bana mail atma”\n"
+        "• “Teknokör'den gelenleri hemen bildir”\n"
+        "• “Engelsiz iPhone grubunu özete al”\n"
+        "• “Hangi gruplardan mail geliyor?”\n"
+        "• “Şimdi bir özet ver”\n"
+        "• “Özetleri 6 saatte bir gönder”\n"
+        "• “Sessiz saatler 23 ile 9 arası olsun”\n"
+        "• “Harfoni kelimesini de takip et”\n"
+        "• “Dün GEÖP'te otonom araçlar hakkında ne konuşuldu?”\n\n"
+        "📌 <b>Komutlar</b>\n"
+        "• /bekleyenler — Onay bekleyen taslaklar\n"
+        "• /gruplar — Gruplar ve modları (butonlu)\n"
+        "• /ozet — Grup özetini şimdi gönder\n"
+        "• /kelimeler — Takip edilen anahtar kelimeler\n"
+        "• /rapor — Günlük raporu şimdi göster\n"
+        "• /kontrol_et — Gelen kutusunu hemen tara\n"
+        "• /durum — Sistem durumu\n"
+        "• /iptaller — İptal edilen yanıtlar, /geri_al &lt;id&gt; ile geri alınır\n"
+        "• /hesaplar, /hesap_ekle, /hesap_sil &lt;id&gt; — E-posta hesapları\n"
+        "• /vitrin — Vitrindeki uygulamalar\n"
+        "• /iptal — Yazma/düzenleme modundan çık\n"
+        "• /yardim — Bu sayfa\n\n"
+        "🛡️ Sistem kendini izler: çökerse otomatik ayağa kalkar, e-postalar kalıcı kuyrukta tutulur, "
+        "her gün veritabanı yedeği alınır."
+    )
+    await update.effective_message.reply_text(msg1, parse_mode=ParseMode.HTML)
+    await update.effective_message.reply_text(msg2, parse_mode=ParseMode.HTML)
 
 @admin_only
 async def cmd_vitrin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -912,18 +943,12 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # Default fallback for free text
-    await update.message.reply_text(
-        "🤖 <b>E-posta Asistanı</b>\n\n"
-        "Şu anda aktif bir metin düzenleme modunda değilsiniz.\n\n"
-        "<b>Kullanabileceğiniz hızlı işlemler:</b>\n"
-        "• <b>gönder</b> veya <b>onayla</b> - Bekleyen son taslağı hemen gönderir\n"
-        "• <b>okundu yap</b> - Bekleyen son postayı okundu olarak kapatır\n"
-        "• <b>yeniden üret</b> - Son taslağı yeni bir üslupla üretir\n"
-        "• /bekleyenler - Onay bekleyen tüm taslakları listeler\n"
-        "• /durum - Sistem ve servis durumunu görüntüler\n"
-        "• /yardim - Tüm komutların listesi",
-        parse_mode=ParseMode.HTML
+    # Default: talk to the assistant in natural language (groups, digests, keywords, archive Q&A ...)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    await group_assistant.handle_natural_language(
+        raw_text, context.bot, safe_send_message,
+        pending_handler=lambda: cmd_bekleyenler(update, context),
+        help_handler=lambda: cmd_start(update, context),
     )
 
 # Message handler for drafting instructions
@@ -1052,6 +1077,10 @@ async def _fetch_phase(bot, acc: dict) -> None:
                 continue
             if m.get("is_ignored"):
                 logger.info(f"🚫 [FİLTRE] '{m['subject']}' | {m['sender']} | {m.get('ignore_reason')}")
+                if m.get("group_key"):
+                    await group_assistant.store_group_message(
+                        m["group_key"], m.get("group_name") or m["group_key"], msg_id,
+                        m["sender"], m["subject"], m.get("body") or "")
                 await database.mark_message_processed(acc["id"], msg_id)
                 safe_uids.append(m["uid"])
                 continue
@@ -1175,7 +1204,12 @@ async def check_emails_cycle(bot) -> int:
                 await _fetch_phase(bot, acc)
             except Exception as e:
                 logger.error(f"Fetch phase error for {acc.get('email_address')}: {e}", exc_info=True)
-        return await _process_phase(bot)
+        done = await _process_phase(bot)
+        try:
+            await group_assistant.run_scheduled(bot, safe_send_message)
+        except Exception as e:
+            logger.error(f"Group assistant scheduler error: {e}", exc_info=True)
+        return done
 
 @admin_only
 async def cmd_kontrol_et(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1290,6 +1324,10 @@ async def cmd_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"❓ Bilinmeyen komut: {update.message.text.split()[0]}\n\n"
         "Kullanılabilir komutlar:\n"
         "/bekleyenler - Onay bekleyen taslaklar\n"
+        "/gruplar - Gruplar ve modları\n"
+        "/ozet - Grup özetini şimdi gönder\n"
+        "/kelimeler - Anahtar kelime alarmları\n"
+        "/rapor - Günlük rapor\n"
         "/kontrol_et - Gelen kutusunu şimdi tara\n"
         "/durum - Sistem durumu\n"
         "/iptaller - İptal edilen yanıtlar\n"
@@ -1297,6 +1335,69 @@ async def cmd_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/vitrin - Uygulama kataloğu\n"
         "/yardim - Tüm yardım"
     )
+
+# ===================== GROUP ASSISTANT COMMANDS =====================
+@admin_only
+async def cmd_gruplar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    groups = await group_assistant.get_groups()
+    if not groups:
+        await update.message.reply_text(
+            "📭 Henüz kayıtlı grup yok. Gruplardan e-posta geldikçe burada otomatik olarak listelenecek.")
+        return
+    interval = await group_assistant.get_setting("digest_interval_hours")
+    qs = int(await group_assistant.get_setting("quiet_start"))
+    qe = int(await group_assistant.get_setting("quiet_end"))
+    await update.message.reply_text(
+        f"📚 <b>Takip edilen {len(groups)} grup</b>\n"
+        f"Özet sıklığı: {interval} saatte bir • Sessiz saatler: {qs:02d}:00–{qe:02d}:00\n"
+        f"Her grubun altındaki butonla modunu değiştirebilirsiniz.",
+        parse_mode=ParseMode.HTML)
+    for g in groups:
+        await update.message.reply_text(
+            f"<b>{html.escape(g['name'] or g['group_key'])}</b>\n"
+            f"Mod: {group_assistant.MODES.get(g['mode'], g['mode'])} • Son 24 saat: {g.get('last24', 0)} ileti",
+            parse_mode=ParseMode.HTML,
+            reply_markup=group_assistant.group_mode_keyboard(g["group_key"], g["mode"]))
+
+@admin_only
+async def cmd_ozet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📰 <i>Grup özeti hazırlanıyor...</i>", parse_mode=ParseMode.HTML)
+    await group_assistant.build_and_send_digest(context.bot, safe_send_message, manual=True)
+
+@admin_only
+async def cmd_kelimeler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kws = await group_assistant.get_keywords()
+    await update.message.reply_text(
+        "🔔 <b>Takip edilen anahtar kelimeler</b>\n"
+        + ("\n".join(f"• {html.escape(k)}" for k in kws) or "(yok)")
+        + "\n\nBu kelimeler herhangi bir grupta geçerse (sessizdeki gruplar dahil) anında haber verilir.\n"
+          "Eklemek/çıkarmak için yazmanız yeterli: “Harfoni kelimesini de takip et” veya “Harfoni'yi takipten çıkar”.",
+        parse_mode=ParseMode.HTML)
+
+@admin_only
+async def cmd_rapor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await group_assistant.build_morning_report(context.bot, safe_send_message)
+
+@admin_only
+async def handle_group_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        _, mode, sid = query.data.split(":", 2)
+    except ValueError:
+        await query.answer("Geçersiz işlem.")
+        return
+    g = await group_assistant.resolve_short_id(sid)
+    if not g or mode not in group_assistant.MODES:
+        await query.answer("Grup bulunamadı.", show_alert=True)
+        return
+    await group_assistant.set_group_mode(g["group_key"], mode)
+    label = group_assistant.MODES[mode]
+    await query.answer(f"{g['name']} → {label}", show_alert=True)
+    try:
+        await query.edit_message_reply_markup(reply_markup=group_assistant.group_mode_keyboard(g["group_key"], mode))
+    except Exception:
+        pass
+    await query.message.reply_text(f"✅ <b>{html.escape(g['name'])}</b> grubu artık {label} modunda.", parse_mode=ParseMode.HTML)
 
 def setup_bot_handlers(application: Application):
     conv_handler = ConversationHandler(
@@ -1319,6 +1420,11 @@ def setup_bot_handlers(application: Application):
     application.add_handler(CommandHandler("kontrol_et", cmd_kontrol_et))
     application.add_handler(CommandHandler("bekleyenler", cmd_bekleyenler))
     application.add_handler(CommandHandler("iptal", cmd_iptal))
+    application.add_handler(CommandHandler("gruplar", cmd_gruplar))
+    application.add_handler(CommandHandler("ozet", cmd_ozet))
+    application.add_handler(CommandHandler("kelimeler", cmd_kelimeler))
+    application.add_handler(CommandHandler("rapor", cmd_rapor))
+    application.add_handler(CallbackQueryHandler(handle_group_callback, pattern=r"^gmode:"))
     application.add_handler(CommandHandler("iptaller", cmd_iptaller))
     application.add_handler(CommandHandler("geri_al", cmd_geri_al))
     application.add_handler(MessageHandler(filters.Regex(r"^/geri_al_\d+"), cmd_geri_al))

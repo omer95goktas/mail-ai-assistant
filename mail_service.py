@@ -214,8 +214,16 @@ def fetch_unseen_emails(account: dict):
                     subject = decode_mime_words(msg.get("Subject", "")).strip() or "(Konusuz)"
                     is_ignored, ignore_reason = is_mailing_list_or_ignored(msg)
 
+                    group_key, group_name = None, None
+                    if is_ignored:
+                        try:
+                            from group_assistant import extract_group_info
+                            group_key, group_name = extract_group_info(msg)
+                        except Exception as e_grp:
+                            logger.warning(f"Group info extraction failed: {e_grp}")
+
                     body = ""
-                    if not is_ignored:
+                    if not is_ignored or group_key:
                         try:
                             body = extract_body(msg)
                         except Exception as e_body:
@@ -229,7 +237,9 @@ def fetch_unseen_emails(account: dict):
                         "subject": subject,
                         "body": body,
                         "is_ignored": is_ignored,
-                        "ignore_reason": ignore_reason
+                        "ignore_reason": ignore_reason,
+                        "group_key": group_key,
+                        "group_name": group_name
                     })
             except Exception as e:
                 logger.error(f"Error fetching UID {uid}: {e}")

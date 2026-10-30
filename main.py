@@ -7,6 +7,8 @@ from telegram.ext import Application
 
 import config
 import database
+import group_assistant
+from telegram import BotCommand
 from bot import setup_bot_handlers, check_emails_cycle
 import time
 from pathlib import Path
@@ -65,6 +67,24 @@ async def background_loop(app: Application):
 async def post_init(application: Application):
     logger.info("Initializing database...")
     await database.init_db()
+    await group_assistant.init_tables()
+    try:
+        await application.bot.set_my_commands([
+            BotCommand("bekleyenler", "Onay bekleyen taslaklar"),
+            BotCommand("gruplar", "Gruplar ve bildirim modları"),
+            BotCommand("ozet", "Grup özetini şimdi gönder"),
+            BotCommand("kelimeler", "Anahtar kelime alarmları"),
+            BotCommand("rapor", "Günlük rapor"),
+            BotCommand("kontrol_et", "Gelen kutusunu hemen tara"),
+            BotCommand("durum", "Sistem durumu"),
+            BotCommand("iptaller", "İptal edilen yanıtlar"),
+            BotCommand("hesaplar", "E-posta hesapları"),
+            BotCommand("vitrin", "Vitrindeki uygulamalar"),
+            BotCommand("iptal", "Yazma modundan çık"),
+            BotCommand("yardim", "Yardım ve tüm özellikler"),
+        ])
+    except Exception as e:
+        logger.warning(f"Could not set bot command menu: {e}")
     update_heartbeat()
     logger.info("Starting background worker task...")
     task = asyncio.create_task(background_loop(application))
